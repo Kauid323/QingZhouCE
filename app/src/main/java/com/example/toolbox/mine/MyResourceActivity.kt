@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AppShortcut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
@@ -139,11 +140,19 @@ fun MyResourceScreen(onBack: () -> Unit) {
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                val intent = Intent(context, ResourceUploadActivity::class.java)
-                context.startActivity(intent)
-            }) {
-                Icon(Icons.Default.Add, contentDescription = null)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FloatingActionButton(onClick = {
+                    val intent = Intent(context, ResourceSourceActivity::class.java)
+                    context.startActivity(intent)
+                }) {
+                    Icon(Icons.Default.AppShortcut, contentDescription = null)
+                }
+                FloatingActionButton(onClick = {
+                    val intent = Intent(context, ResourceUploadActivity::class.java)
+                    context.startActivity(intent)
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                }
             }
         }
     ) { innerPadding ->

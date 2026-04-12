@@ -190,6 +190,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".mine.ResourceSourceActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
             android:name=".mine.MyResourceActivity"
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
@@ -353,8 +357,4 @@
         </provider>
     </application>
 
-<<<<<<< HEAD
 </manifest>
-=======
-</manifest>
->>>>>>> 653be43e816d3925f37e882dc6e1f94369c4944e

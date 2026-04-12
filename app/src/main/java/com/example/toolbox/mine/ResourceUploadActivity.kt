@@ -1,9 +1,9 @@
-@file:Suppress("AssignedValueIsNeverRead")
-
 package com.example.toolbox.mine
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -100,68 +100,111 @@ class ResourceUploadActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val sharedApkInfo = readSharedApkInfo(intent)
-
         setContent {
             ToolBoxTheme {
                 ResourceUploadScreen(
-                    sharedApkInfo = sharedApkInfo,
+                    initialInfo = resolveInitialInfo(),
                     onFinish = { finish() }
                 )
             }
         }
     }
 
-    private fun readSharedApkInfo(intent: Intent?): SharedApkInfo? {
-        if (intent?.action != Intent.ACTION_SEND) return null
-
-        val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java) ?: return null
-        if (!isApkShare(intent.type, uri)) return null
-
-        return parseSharedApk(uri)
-    }
-
-    private fun isApkShare(mimeType: String?, uri: Uri): Boolean {
-        if (mimeType == "application/vnd.android.package-archive" || mimeType == "application/octet-stream") {
-            return true
+    private fun resolveInitialInfo(): ResourceDraft? {
+        val apkUri = IntentCompat.getParcelableExtra(intent, EXTRA_APK_URI, Uri::class.java)
+        if (apkUri != null) {
+            return parseArchiveUri(apkUri)
         }
-        return queryDisplayName(this, uri)?.endsWith(".apk", ignoreCase = true) == true
+
+        val installedPackage = intent.getStringExtra(EXTRA_PACKAGE_NAME)
+        if (!installedPackage.isNullOrBlank()) {
+            return parseInstalledPackage(installedPackage)
+        }
+
+        if (intent?.action == Intent.ACTION_SEND) {
+            val sharedUri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            if (sharedUri != null && isApkUri(sharedUri, intent.type)) {
+                return parseArchiveUri(sharedUri)
+            }
+        }
+
+        return null
     }
 
-    private fun parseSharedApk(uri: Uri): SharedApkInfo? {
+    private fun parseArchiveUri(uri: Uri): ResourceDraft? {
         val apkFile = copyUriToCache(this, uri, "shared_apk", ".apk") ?: return null
         val packageInfo = packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_ACTIVITIES)
             ?: return null
         val applicationInfo = packageInfo.applicationInfo ?: return null
-
         applicationInfo.sourceDir = apkFile.absolutePath
         applicationInfo.publicSourceDir = apkFile.absolutePath
+        return buildDraft(
+            packageInfo = packageInfo,
+            applicationInfo = applicationInfo,
+            archiveSize = apkFile.length()
+        )
+    }
 
-        val appName = packageManager.getApplicationLabel(applicationInfo).toString().ifBlank {
-            apkFile.nameWithoutExtension
+    private fun parseInstalledPackage(packageName: String): ResourceDraft? {
+        return try {
+            val packageInfo = packageManager.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES)
+            val applicationInfo = packageInfo.applicationInfo ?: return null
+            val archiveSize = File(applicationInfo.sourceDir.orEmpty()).takeIf { it.exists() }?.length() ?: 0L
+            buildDraft(packageInfo, applicationInfo, archiveSize)
+        } catch (_: Exception) {
+            null
         }
+    }
+
+    private fun buildDraft(
+        packageInfo: PackageInfo,
+        applicationInfo: ApplicationInfo,
+        archiveSize: Long
+    ): ResourceDraft {
         val iconFile = saveDrawableToCache(
             context = this,
             drawable = packageManager.getApplicationIcon(applicationInfo),
-            fileName = "shared_apk_icon_${System.currentTimeMillis()}.png"
+            fileName = "resource_icon_${System.currentTimeMillis()}.png"
         )
-
-        return SharedApkInfo(
-            appName = appName,
+        return ResourceDraft(
+            name = packageManager.getApplicationLabel(applicationInfo).toString(),
             packageName = applicationInfo.packageName.orEmpty(),
-            versionName = packageInfo.versionName.orEmpty(),
-            sizeText = Formatter.formatShortFileSize(this, apkFile.length()),
+            version = packageInfo.versionName.orEmpty(),
+            size = if (archiveSize > 0) Formatter.formatShortFileSize(this, archiveSize) else "",
             iconPreview = iconFile?.toUri()?.toString().orEmpty(),
             iconFilePath = iconFile?.absolutePath
         )
     }
+
+    private fun isApkUri(uri: Uri, mimeType: String?): Boolean {
+        if (mimeType == "application/vnd.android.package-archive") return true
+        if (mimeType == "application/octet-stream") return true
+        return queryDisplayName(this, uri)?.endsWith(".apk", ignoreCase = true) == true
+    }
+
+    companion object {
+        const val EXTRA_APK_URI = "extra_apk_uri"
+        const val EXTRA_PACKAGE_NAME = "extra_package_name"
+
+        fun createApkIntent(context: Context, uri: Uri): Intent {
+            return Intent(context, ResourceUploadActivity::class.java).apply {
+                putExtra(EXTRA_APK_URI, uri)
+            }
+        }
+
+        fun createInstalledAppIntent(context: Context, packageName: String): Intent {
+            return Intent(context, ResourceUploadActivity::class.java).apply {
+                putExtra(EXTRA_PACKAGE_NAME, packageName)
+            }
+        }
+    }
 }
 
-private data class SharedApkInfo(
-    val appName: String,
+private data class ResourceDraft(
+    val name: String,
     val packageName: String,
-    val versionName: String,
-    val sizeText: String,
+    val version: String,
+    val size: String,
     val iconPreview: String,
     val iconFilePath: String?
 )
@@ -169,35 +212,41 @@ private data class SharedApkInfo(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ResourceUploadScreen(
-    sharedApkInfo: SharedApkInfo?,
+    initialInfo: ResourceDraft?,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
     val token = TokenManager.get(context)
     val client = remember { OkHttpClient() }
-    val coroutineScope = rememberCoroutineScope()
-    var name by rememberSaveable { mutableStateOf(sharedApkInfo?.appName.orEmpty()) }
-    var packageName by rememberSaveable { mutableStateOf(sharedApkInfo?.packageName.orEmpty()) }
-    var version by rememberSaveable { mutableStateOf(sharedApkInfo?.versionName.orEmpty()) }
-    var size by rememberSaveable { mutableStateOf(sharedApkInfo?.sizeText.orEmpty()) }
-    var downloadUrl by rememberSaveable { mutableStateOf("") }
-    var iconPreview by rememberSaveable { mutableStateOf(sharedApkInfo?.iconPreview.orEmpty()) }
-    var iconUrl by rememberSaveable { mutableStateOf("") }
-    var localIconPath by rememberSaveable { mutableStateOf(sharedApkInfo?.iconFilePath) }
-    var submitting by remember { mutableStateOf(false) }
-    val categories = listOf("其他", "开源软件", "实用工具", "生活便利", "影音娱乐", "玩机工具", "社交", "金融理财", "网页")
-    var expanded by remember { mutableStateOf(false) }
-    var selectedIndex by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
 
+    var name by rememberSaveable { mutableStateOf(initialInfo?.name.orEmpty()) }
+    var packageName by rememberSaveable { mutableStateOf(initialInfo?.packageName.orEmpty()) }
+    var version by rememberSaveable { mutableStateOf(initialInfo?.version.orEmpty()) }
+    var size by rememberSaveable { mutableStateOf(initialInfo?.size.orEmpty()) }
+    var downloadUrl by rememberSaveable { mutableStateOf("") }
+    var iconPreview by rememberSaveable { mutableStateOf(initialInfo?.iconPreview.orEmpty()) }
+    var iconUrl by rememberSaveable { mutableStateOf("") }
+    var localIconPath by rememberSaveable { mutableStateOf(initialInfo?.iconFilePath) }
+    var selectedIndex by remember { mutableIntStateOf(0) }
+    var expanded by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
+    var showIconSheet by remember { mutableStateOf(false) }
+    var showUrlDialog by remember { mutableStateOf(false) }
+    var submitting by remember { mutableStateOf(false) }
+
+    val categories = listOf("其他", "开源软件", "实用工具", "生活便利", "影音娱乐", "玩机工具", "社交", "金融理财", "网页")
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         val imageFile = copyUriToCache(context, uri, "resource_icon", ".png")
         if (imageFile == null) {
             Toast.makeText(context, "读取图片失败", Toast.LENGTH_SHORT).show()
             return@rememberLauncherForActivityResult
         }
+        iconPreview = imageFile.toUri().toString()
         localIconPath = imageFile.absolutePath
         iconUrl = ""
-        iconPreview = imageFile.toUri().toString()
     }
 
     BackHandler { showExitDialog = true }
@@ -206,7 +255,6 @@ private fun ResourceUploadScreen(
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
             title = { Text("退出") },
-
             text = { Text("确定退出吗？当前填写内容不会保存。") },
             confirmButton = { TextButton(onClick = onFinish) { Text("确定") } },
             dismissButton = { TextButton(onClick = { showExitDialog = false }) { Text("取消") } }
@@ -237,14 +285,11 @@ private fun ResourceUploadScreen(
                         return@ExtendedFloatingActionButton
                     }
 
-                    coroutineScope.launch {
+                    scope.launch {
                         submitting = true
-
                         val finalIconUrl = when {
                             iconUrl.isNotBlank() -> iconUrl
-                            !localIconPath.isNullOrBlank() -> {
-                                uploadImageFile(localIconPath!!, token, 3) { }
-                            }
+                            !localIconPath.isNullOrBlank() -> uploadImageFile(localIconPath!!, token, 3) { }
                             else -> ""
                         }
 
@@ -267,11 +312,7 @@ private fun ResourceUploadScreen(
                         )
 
                         submitting = false
-                        Toast.makeText(
-                            context,
-                            if (success) "投稿成功" else "投稿失败",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(context, if (success) "投稿成功" else "投稿失败", Toast.LENGTH_SHORT).show()
                         if (success) onFinish()
                     }
                 },
@@ -290,22 +331,14 @@ private fun ResourceUploadScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
-                    painter = if (iconPreview.isNotBlank()) {
-                        rememberAsyncImagePainter(iconPreview)
-                    } else {
-                        painterResource(R.drawable.resource)
-                    },
+                    painter = if (iconPreview.isNotBlank()) rememberAsyncImagePainter(iconPreview) else painterResource(R.drawable.resource),
                     contentDescription = null,
                     modifier = Modifier
                         .size(60.dp)
                         .clip(CircleShape)
                         .clickable { showIconSheet = true },
                     contentScale = ContentScale.Crop,
-                    colorFilter = if (iconPreview.isBlank()) {
-                        ColorFilter.tint(MaterialTheme.colorScheme.primary)
-                    } else {
-                        null
-                    }
+                    colorFilter = if (iconPreview.isBlank()) ColorFilter.tint(MaterialTheme.colorScheme.primary) else null
                 )
                 Spacer(modifier = Modifier.width(15.dp))
                 OutlinedTextField(
@@ -317,7 +350,6 @@ private fun ResourceUploadScreen(
                 )
             }
 
-            // 分类选择
             ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
                 OutlinedTextField(
                     value = categories[selectedIndex],
@@ -333,9 +365,9 @@ private fun ResourceUploadScreen(
                         .fillMaxWidth()
                 )
                 ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    categories.forEachIndexed { index, category ->
+                    categories.forEachIndexed { index, title ->
                         DropdownMenuItem(
-                            text = { Text(category) },
+                            text = { Text(title) },
                             onClick = {
                                 selectedIndex = index
                                 expanded = false
@@ -344,7 +376,6 @@ private fun ResourceUploadScreen(
                     }
                 }
             }
-
 
             OutlinedTextField(
                 value = packageName,
@@ -464,7 +495,7 @@ private suspend fun submitResource(
         .build()
 
     return@withContext try {
-        client.newCall(request).execute().use { response -> response.isSuccessful }
+        client.newCall(request).execute().use { it.isSuccessful }
     } catch (_: IOException) {
         false
     }
@@ -477,20 +508,18 @@ private fun copyUriToCache(
     fallbackSuffix: String
 ): File? {
     return try {
-        val originalName = queryDisplayName(context, uri)
-        val suffix = originalName
+        val displayName = queryDisplayName(context, uri)
+        val suffix = displayName
             ?.substringAfterLast('.', "")
             ?.takeIf { it.isNotBlank() }
             ?.let { ".$it" }
             ?: fallbackSuffix
         val file = File(context.cacheDir, "${prefix}_${System.currentTimeMillis()}$suffix")
-
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(file).use { output -> input.copyTo(output) }
         } ?: return null
-
         file
-    } catch (_: IOException) {
+    } catch (_: Exception) {
         null
     }
 }
@@ -508,21 +537,19 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
 
 private fun saveDrawableToCache(context: Context, drawable: Drawable, fileName: String): File? {
     return try {
-        val bitmap = drawable.toBitmap()
+        val bitmap = drawable.toBitmapCompat()
         val file = File(context.cacheDir, fileName)
         FileOutputStream(file).use { output ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
         }
         file
-    } catch (_: IOException) {
+    } catch (_: Exception) {
         null
     }
 }
 
-private fun Drawable.toBitmap(): Bitmap {
-    if (this is BitmapDrawable && bitmap != null) {
-        return bitmap
-    }
+private fun Drawable.toBitmapCompat(): Bitmap {
+    if (this is BitmapDrawable && bitmap != null) return bitmap
 
     val bitmap = Bitmap.createBitmap(
         intrinsicWidth.coerceAtLeast(1),
