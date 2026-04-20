@@ -9,16 +9,15 @@ plugins {
 
 android {
     namespace = "com.example.toolbox"
-    compileSdk {
-        version = release(36)
-    }
+
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.juhao.toolbox.kotlin"
         minSdk = 23
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.8"
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

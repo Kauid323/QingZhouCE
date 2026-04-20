@@ -5,6 +5,8 @@ import cat.ereza.customactivityoncrash.config.CaocConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonBuilder
 
+const val ApiAddress = "https://hehenya.dpdns.org:8505/"
+
 object AppJson {
     private val default: JsonBuilder.() -> Unit = {
         prettyPrint = false

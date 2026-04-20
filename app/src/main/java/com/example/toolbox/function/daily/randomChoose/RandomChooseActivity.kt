@@ -64,6 +64,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -88,21 +89,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.withSave
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.toolbox.ui.theme.ToolBoxTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.collections.plus
 import kotlin.math.cos
-import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 import androidx.core.content.edit
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 
 @Serializable
 data class RandomItem(
@@ -122,9 +123,6 @@ data class SavedConfig(
 
 class RandomChooseViewModel : ViewModel() {
     var items by mutableStateOf<List<RandomItem>>(emptyList())
-        private set
-
-    var displayItems by mutableStateOf<List<RandomItem>>(emptyList())
         private set
 
     var newItemName by mutableStateOf("")
@@ -155,15 +153,22 @@ class RandomChooseViewModel : ViewModel() {
 
     val totalWeight: Int
         get() = items.sumOf { it.weight }
-        
+
     private val json = Json { ignoreUnknownKeys = true }
     private val prefsKey = "random_wheel_prefs"
-    
+
     var savedConfigs by mutableStateOf<List<SavedConfig>>(emptyList())
         private set
-    
+
     var showSaveManagerDialog by mutableStateOf(false)
         private set
+
+    var configName by mutableStateOf("")
+        private set
+
+    fun updateConfigName(name: String) {
+        configName = name
+    }
 
     fun updateNewItemName(name: String) {
         newItemName = name
@@ -195,7 +200,6 @@ class RandomChooseViewModel : ViewModel() {
             selectedResult = ""
             showResult = false
             targetIndex = -1
-            displayItems = items
         } catch (e: Exception) {
             errorMessage = "添加失败: ${e.message}"
         }
@@ -206,7 +210,6 @@ class RandomChooseViewModel : ViewModel() {
         selectedResult = ""
         showResult = false
         targetIndex = -1
-        displayItems = items
     }
 
     fun clearAllItems() {
@@ -216,7 +219,6 @@ class RandomChooseViewModel : ViewModel() {
         isSpinning = false
         rotationAngle = 0f
         targetIndex = -1
-        displayItems = items
     }
 
     fun spin() {
@@ -229,37 +231,36 @@ class RandomChooseViewModel : ViewModel() {
 
             items = items.map { it.copy(isSelected = false) }
 
-            displayItems = items.shuffled()
-
             val targetItem = selectItemByWeight()
+            val index = items.indexOf(targetItem)
 
-            val index = displayItems.indexOf(targetItem)
+            val totalWeight = items.sumOf { it.weight }.toFloat()
+            val startAngle = items.take(index).sumOf { it.weight }.toFloat() / totalWeight * 360f
+            val sweepAngle = targetItem.weight.toFloat() / totalWeight * 360f
 
-            val sliceAngle = 360f / displayItems.size
+            val safeMargin = sweepAngle * 0.2f
+            val randomOffset = if (sweepAngle > 2 * safeMargin) {
+                Random.nextFloat() * (sweepAngle - 2 * safeMargin) + safeMargin
+            } else {
+                sweepAngle / 2f
+            }
 
-            val safeMargin = sliceAngle * 0.2f
-            val randomOffset = Random.nextFloat() * (sliceAngle - 2 * safeMargin) + safeMargin
+            val targetSectorAngle = startAngle + randomOffset
+            val pointerAngle = 270f
+            val neededRotation = ((pointerAngle - targetSectorAngle) % 360f + 360f) % 360f
+            val currentMod = ((rotationAngle % 360f) + 360f) % 360f
 
-            val targetAbsoluteAngle = index * sliceAngle + randomOffset
+            var delta = neededRotation - currentMod
+            if (delta < 0) delta += 360f
 
-            val currentRotation = rotationAngle % 360f
-            val normalizedCurrent = if (currentRotation < 0) currentRotation + 360f else currentRotation
+            val extraSpins = Random.nextInt(8, 13) * 360f
+            val totalRotation = delta + extraSpins
 
-            val targetWorldAngle = (normalizedCurrent + targetAbsoluteAngle) % 360f
+            // 动画旋转
+            animateRotation(rotationAngle, rotationAngle + totalRotation, 2500)
 
-            var deltaRotation = (270f - targetWorldAngle) % 360f
-            if (deltaRotation < 0) deltaRotation += 360f
-
-            val extraSpins = Random.nextInt(5, 8) * 360f
-            val totalRotation = deltaRotation + extraSpins
-
-            val startAngle = rotationAngle
-            val endAngle = rotationAngle + totalRotation
-
-            animateRotation(start = startAngle, end = endAngle, durationMs = 3500)
-
-            items = items.mapIndexed { _, item ->
-                if (item.name == targetItem.name) item.copy(isSelected = true) else item.copy(isSelected = false)
+            items = items.mapIndexed { i, item ->
+                if (i == index) item.copy(isSelected = true) else item.copy(isSelected = false)
             }
 
             targetIndex = index
@@ -267,6 +268,19 @@ class RandomChooseViewModel : ViewModel() {
             showResult = true
             isSpinning = false
         }
+    }
+
+    private suspend fun animateRotation(start: Float, end: Float, durationMs: Long) {
+        val startTime = System.currentTimeMillis()
+        while (true) {
+            val elapsed = System.currentTimeMillis() - startTime
+            val progress = (elapsed.toFloat() / durationMs).coerceIn(0f, 1f)
+            val eased = 1 - (1 - progress) * (1 - progress) * (1 - progress) // ease out cubic
+            rotationAngle = start + (end - start) * eased
+            if (progress >= 1f) break
+            delay(16)
+        }
+        rotationAngle = end
     }
 
     private fun selectItemByWeight(): RandomItem {
@@ -281,30 +295,10 @@ class RandomChooseViewModel : ViewModel() {
         return items.last()
     }
 
-    private suspend fun animateRotation(start: Float, end: Float, durationMs: Long) {
-        val startTime = System.currentTimeMillis()
-
-        while (true) {
-            val elapsed = System.currentTimeMillis() - startTime
-            val progress = (elapsed.toFloat() / durationMs).coerceIn(0f, 1f)
-
-            val eased = 1 - (1 - progress).pow(3)
-
-            rotationAngle = start + (end - start) * eased
-
-            if (progress >= 1f) {
-                rotationAngle = end
-                break
-            }
-
-            delay(16)
-        }
-    }
-    
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(prefsKey, Context.MODE_PRIVATE)
     }
-    
+
     private fun loadSavedConfigs(context: Context) {
         val jsonStr = getPrefs(context).getString("saved_configs", null) ?: ""
         savedConfigs = try {
@@ -313,26 +307,27 @@ class RandomChooseViewModel : ViewModel() {
             emptyList()
         }
     }
-    
+
     fun openSaveManagerDialog(context: Context) {
         loadSavedConfigs(context)
         showSaveManagerDialog = true
     }
-    
+
     fun closeSaveManagerDialog() {
         showSaveManagerDialog = false
     }
-    
-    fun saveCurrentList(context: Context, name: String = "") {
+
+    fun saveCurrentList(context: Context) {
         if (items.isEmpty()) {
             errorMessage = "没有可保存的项目"
             return
         }
         val configs = savedConfigs.toMutableList()
         val timestamp = System.currentTimeMillis()
+        val finalName = configName.ifEmpty { "配置 ${configs.size + 1}" }
         val newConfig = SavedConfig(
             id = timestamp,
-            name = name.ifEmpty { "配置 ${configs.size + 1}" },
+            name = finalName,
             items = items.map { it.copy() },
             timestamp = timestamp
         )
@@ -340,39 +335,41 @@ class RandomChooseViewModel : ViewModel() {
         getPrefs(context).edit { putString("saved_configs", json.encodeToString(configs)) }
         savedConfigs = configs
         errorMessage = ""
-        Toast.makeText(context, "已保存", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "已保存: $finalName", Toast.LENGTH_SHORT).show()
     }
-    
+
     fun loadConfig(context: Context, config: SavedConfig) {
         items = config.items.map { it.copy(id = ++nextId) }
+        configName = config.name
         selectedResult = ""
         showResult = false
         isSpinning = false
         rotationAngle = 0f
         targetIndex = -1
         errorMessage = ""
-        displayItems = items
         Toast.makeText(context, "已加载: ${config.name}", Toast.LENGTH_SHORT).show()
     }
-    
+
     fun deleteConfig(context: Context, id: Long) {
         val configs = savedConfigs.filter { it.id != id }
         getPrefs(context).edit { putString("saved_configs", json.encodeToString(configs)) }
         savedConfigs = configs
         Toast.makeText(context, "已删除", Toast.LENGTH_SHORT).show()
     }
-    
+
     fun overwriteConfig(context: Context, id: Long) {
         val index = savedConfigs.indexOfFirst { it.id == id }
         if (index == -1) return
         val configs = savedConfigs.toMutableList()
+        val newName = configName.ifEmpty { configs[index].name }
         configs[index] = configs[index].copy(
+            name = newName,
             items = items.map { it.copy() },
             timestamp = System.currentTimeMillis()
         )
         getPrefs(context).edit { putString("saved_configs", json.encodeToString(configs)) }
         savedConfigs = configs
-        Toast.makeText(context, "已覆盖", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "已覆盖: $newName", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -400,9 +397,6 @@ fun RandomChooseScreen(
     val viewModel: RandomChooseViewModel = viewModel()
     val context = LocalContext.current
 
-    val showSaveDialog = remember { mutableStateOf(false) }
-    var saveConfigName by remember { mutableStateOf("") }
-
     val showAddItemDialog = remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
@@ -414,33 +408,6 @@ fun RandomChooseScreen(
         }
     }
 
-    // --- 1. 保存配置弹窗 ---
-    if (showSaveDialog.value) {
-        AlertDialog(
-            onDismissRequest = { showSaveDialog.value = false },
-            title = { Text("保存配置") },
-            text = {
-                OutlinedTextField(
-                    value = saveConfigName,
-                    onValueChange = { saveConfigName = it },
-                    label = { Text("配置名称（可选）") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.saveCurrentList(context, saveConfigName)
-                    saveConfigName = ""
-                    showSaveDialog.value = false
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSaveDialog.value = false }) { Text("取消") }
-            }
-        )
-    }
-
-    // --- 2. 管理已保存配置弹窗 ---
     if (viewModel.showSaveManagerDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.closeSaveManagerDialog() },
@@ -498,7 +465,6 @@ fun RandomChooseScreen(
         )
     }
 
-    // --- 3. 添加项目弹窗 ---
     if (showAddItemDialog.value) {
         AlertDialog(
             onDismissRequest = { showAddItemDialog.value = false },
@@ -572,11 +538,12 @@ fun RandomChooseScreen(
                 Spacer(Modifier.width(4.dp))
 
                 IconButton(
-                    onClick = { showSaveDialog.value = true },
+                    onClick = { viewModel.saveCurrentList(context) },
                     enabled = viewModel.items.isNotEmpty() && !viewModel.isSpinning
                 ) {
                     Icon(Icons.Default.Save, contentDescription = "保存")
                 }
+
                 IconButton(
                     onClick = { viewModel.openSaveManagerDialog(context) },
                     enabled = !viewModel.isSpinning
@@ -615,7 +582,7 @@ fun RandomChooseScreen(
                             text = "添加一些选项，或者载入以前保存的配置来开始抽选吧",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center
                         )
                     }
 
@@ -644,6 +611,31 @@ fun RandomChooseScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (viewModel.items.isNotEmpty()) {
+                    item {
+                        Card(
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = viewModel.configName,
+                                onValueChange = viewModel::updateConfigName,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(4.dp),
+                                placeholder = { Text("输入抽选主题（可选）", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(24.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                )
+                            )
+                        }
+                    }
+                }
+
                 if (viewModel.selectedResult.isNotEmpty()) {
                     item {
                         ResultCard(
@@ -657,10 +649,10 @@ fun RandomChooseScreen(
                     }
                 }
 
-                if (viewModel.displayItems.isNotEmpty()) {
+                if (viewModel.items.isNotEmpty()) {
                     item {
                         WheelCard(
-                            items = viewModel.displayItems,
+                            items = viewModel.items,
                             rotationAngle = viewModel.rotationAngle,
                             isSpinning = viewModel.isSpinning,
                             targetIndex = viewModel.targetIndex,
@@ -696,7 +688,7 @@ fun WheelCard(
     onSpin: () -> Unit
 ) {
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp)
     ) {
@@ -722,7 +714,6 @@ fun WheelCard(
                     targetIndex = targetIndex
                 )
 
-                // 顶部指针
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val centerX = size.width / 2
                     val centerY = size.height / 2
@@ -752,7 +743,6 @@ fun WheelCard(
                     )
                 }
 
-                // 中心按钮
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -800,21 +790,17 @@ fun Wheel(
     rotationAngle: Float,
     targetIndex: Int
 ) {
-    val colors = listOf(
-        Color(0xFF1E88E5),
-        Color(0xFF43A047),
-        Color(0xFFFB8C00),
-        Color(0xFF8E24AA),
-        Color(0xFFE53935),
-        Color(0xFF00ACC1),
-        Color(0xFF7CB342),
-        Color(0xFFF4511E)
-    )
+    val itemColors = remember(items.map { it.id }) {
+        items.associate { item ->
+            val hue = (item.id * 137.5f) % 360f
+            item.id to Color.hsv(hue, 0.7f, 0.9f)
+        }
+    }
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         if (items.isEmpty()) return@Canvas
 
-        val sweepAngle = 360f / items.size
+        val totalWeight = items.sumOf { it.weight }.toFloat()
         val center = Offset(size.width / 2, size.height / 2)
         val radius = size.minDimension / 2 * 0.85f
 
@@ -822,8 +808,9 @@ fun Wheel(
 
         rotate(displayAngle) {
             items.forEachIndexed { index, item ->
-                val startAngle = index * sweepAngle
-                val color = colors[index % colors.size]
+                val startAngle = items.take(index).sumOf { it.weight }.toFloat() / totalWeight * 360f
+                val sweepAngle = item.weight.toFloat() / totalWeight * 360f
+                val color = itemColors[item.id] ?: Color.Gray
 
                 drawArc(
                     color = color,
@@ -886,13 +873,16 @@ fun Wheel(
                     withSave {
                         val fm = paint.fontMetrics
                         val baselineOffset = (fm.ascent + fm.descent) / 2f
-                        val rotationDegrees = if (textAngle > 90f && textAngle < 270f) {
+
+                        val absoluteAngle = ((textAngle + displayAngle) % 360f + 360f) % 360f
+
+                        val nativeRotation = if (absoluteAngle > 90f && absoluteAngle < 270f) {
                             textAngle + 180f
                         } else {
                             textAngle
                         }
 
-                        rotate(rotationDegrees, textX, textY)
+                        rotate(nativeRotation, textX, textY)
                         drawText(displayText, textX, textY - baselineOffset, paint)
                     }
                 }
@@ -1004,7 +994,7 @@ fun ItemsListCard(
     onClearAll: () -> Unit,
     isSpinning: Boolean
 ) {
-    Card(elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -103,7 +104,6 @@ import com.example.toolbox.ui.theme.ToolBoxTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -234,30 +234,49 @@ fun PostArticleScreen(
 
     val permissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
-    val pickImageLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-            if (uris.isEmpty()) return@rememberLauncherForActivityResult
-            coroutineScope.launch {
-                val remainCount = (9 - imageUrls.size).coerceAtLeast(0)
-                if (remainCount <= 0) {
-                    snackbarHostState.showSnackbar("最多只能上传9张图片")
-                    return@launch
+    val pickImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        coroutineScope.launch {
+            val remainCount = (9 - imageUrls.size).coerceAtLeast(0)
+            if (remainCount <= 0) {
+                snackbarHostState.showSnackbar("最多只能上传9张图片")
+                return@launch
+            }
+
+            val uploadUris = uris.distinct().take(remainCount)
+            if (token.isNullOrBlank()) {
+                snackbarHostState.showSnackbar("请先登录")
+                return@launch
+            }
+
+            isLoading = true
+            uploadUris.forEach { uri ->
+                val filePath = try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    if (inputStream != null) {
+                        val tempFile = java.io.File(context.cacheDir, "temp_img_${System.currentTimeMillis()}.jpg")
+                        java.io.FileOutputStream(tempFile).use { output ->
+                            inputStream.copyTo(output)
+                        }
+                        tempFile.absolutePath
+                    } else {
+                        null
+>>>>>>> 3265a2e8be91812342d41c182d6d9d9ed5bd29a8
+                    }
+                } catch (_: Exception) {
+                    null
                 }
 
-                val uploadUris = uris.distinct().take(remainCount)
-                if (token.isNullOrBlank()) {
-                    snackbarHostState.showSnackbar("请先登录")
-                    return@launch
-                }
-
-                isLoading = true
-                uploadUris.forEach { uri ->
-                    val url = uploadImage(context, uri, token, 3) { _ -> }
+                if (filePath != null) {
+                    val url = uploadImage(filePath, token, 3) { _ -> }
                     if (url != null) {
                         imageUrls.add(url)
                     } else {
                         snackbarHostState.showSnackbar("有图片上传失败")
                     }
+                    java.io.File(filePath).delete()
+                } else {
+                    snackbarHostState.showSnackbar("无法读取图片")
                 }
                 isLoading = false
 
@@ -265,7 +284,13 @@ fun PostArticleScreen(
                     snackbarHostState.showSnackbar("已超出上限，仅上传前${remainCount}张")
                 }
             }
+            isLoading = false
+
+            if (uris.size > remainCount) {
+                snackbarHostState.showSnackbar("已超出上限，仅上传前${remainCount}张")
+            }
         }
+    }
 
     LaunchedEffect(exitDialogResult) {
         when (exitDialogResult) {
@@ -484,7 +509,7 @@ fun PostArticleScreen(
                         Icon(
                             Icons.AutoMirrored.Filled.Send,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

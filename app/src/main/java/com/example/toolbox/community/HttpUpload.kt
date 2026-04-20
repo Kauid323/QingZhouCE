@@ -119,31 +119,25 @@ class HttpUpload(
 }
 
 suspend fun uploadImage(
-    context: Context,
-    uri: Uri,
+    filePath: String,
     token: String,
     status: Int = 1,
     onProgress: (Int) -> Unit
 ): String? = withContext(Dispatchers.IO) {
-    var tempFile: File? = null
     try {
-        tempFile = createTempFileFromUri(context, uri) ?: return@withContext null
-
         val uploader = HttpUpload(
             panUrl = "${ApiAddress}upload_image",
             token = token
         )
-
         val resultJson = uploader.uploadFile(
-            filePath = tempFile.absolutePath,
+            filePath = filePath,
             onProgress = onProgress,
             status = status
         )
-
         val result = try {
-            val jsonElement = Json.parseToJsonElement(resultJson)  // 解析为 JsonElement
-            val jsonObject = jsonElement.jsonObject                 // 转为 JsonObject
-            val imageUrl = jsonObject["image_url"]?.jsonPrimitive?.content  // 安全获取字符串
+            val jsonElement = Json.parseToJsonElement(resultJson)
+            val jsonObject = jsonElement.jsonObject
+            val imageUrl = jsonObject["image_url"]?.jsonPrimitive?.content
             if (imageUrl?.startsWith("http") == true) {
                 imageUrl
             } else {
@@ -153,7 +147,6 @@ suspend fun uploadImage(
             null
         }
         return@withContext result
-
     } catch (e: Exception) {
         e.printStackTrace()
         return@withContext null
