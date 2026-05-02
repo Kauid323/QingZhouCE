@@ -69,7 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.rememberAsyncImagePainter
 import com.example.toolbox.MainViewModel
@@ -480,7 +479,14 @@ fun FriendItem(friend: Friend) {
             .fillMaxWidth()
             .clickable {
                 val intent = Intent(context, MessageDetailActivity::class.java)
-                intent.putExtra("user_id", friend.id)
+                // 根据类型设置不同的参数
+                if (friend.type == "group") {
+                    intent.putExtra("chat_type", 2)
+                    intent.putExtra("chat_id", friend.id)
+                } else {
+                    intent.putExtra("chat_type", 1)
+                    intent.putExtra("user_id", friend.id)
+                }
                 context.startActivity(intent)
             }
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -511,7 +517,7 @@ fun FriendItem(friend: Friend) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = friend.username,
+                    text = if (friend.type == "group") friend.name else friend.username,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
                 )
