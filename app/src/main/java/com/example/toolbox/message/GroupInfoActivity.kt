@@ -69,7 +69,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import com.example.toolbox.AppJson
+import com.example.toolbox.data.GroupInfoResponse
+import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -145,7 +150,10 @@ fun GroupInfoScreen(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val group = uiState.group!!
+                    val group = uiState.group
+                    if (group == null) {
+                        return@Column
+                    }
                     
                     // 群头像
                     Image(
@@ -269,10 +277,14 @@ fun GroupInfoScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val creator = group.creator
+                                if (creator == null) {
+                                    return@Row
+                                }
                                 Image(
                                     painter = rememberAsyncImagePainter(
-                                        if (group.creator.avatarUrl.startsWith("http")) group.creator.avatarUrl
-                                        else "${ApiAddress}uploads/${group.creator.avatarUrl}"
+                                        if (creator.avatarUrl.startsWith("http")) creator.avatarUrl
+                                        else "${ApiAddress}uploads/${creator.avatarUrl}"
                                     ),
                                     contentDescription = "创建者头像",
                                     contentScale = ContentScale.Crop,
@@ -283,7 +295,7 @@ fun GroupInfoScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text("群主", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(group.creator.username, fontWeight = FontWeight.Bold)
+                                    Text(creator.username, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -384,33 +396,21 @@ class GroupInfoViewModel(
                     val response = client.newCall(request).execute()
                     if (response.isSuccessful) {
                         val responseBody = response.body.string()
-                        val json = JSONObject(responseBody)
-                        if (json.optBoolean("success", false)) {
-                            val groupJson = json.getJSONObject("group")
-                            val creatorJson = groupJson.optJSONObject("creator")
-                            GroupInfo(
-                                id = groupJson.getInt("id"),
-                                name = groupJson.getString("name"),
-                                avatarUrl = groupJson.optString("avatar_url", ""),
-                                description = groupJson.optString("description", ""),
-                                isPrivate = groupJson.optBoolean("is_private", false),
-                                membersCount = groupJson.optInt("members_count", 0),
-                                status = groupJson.optInt("status", 0),
-                                createdAt = groupJson.optString("created_at", ""),
-                                creator = if (creatorJson != null) {
-                                    GroupCreator(
-                                        id = creatorJson.getInt("id"),
-                                        username = creatorJson.getString("username"),
-                                        avatarUrl = creatorJson.optString("avatar_url", "")
-                                    )
-                                } else null
-                            )
-                        } else null
+                        try {
+                            AppJson.json.decodeFromString<GroupInfoResponse>(responseBody).group
+                        } catch (e: Exception) {
+                            null
+                        }
                     } else null
                 }
 
                 if (result != null) {
-                    _uiState.update { it.copy(isLoading = false, group = result, error = null) }
+                    _uiState.update { it.copy(
+                        isLoading = false, 
+                        group = result, 
+                        error = null,
+                        isJoined = result.isJoined
+                    ) }
                 } else {
                     _uiState.update { it.copy(isLoading = false, error = "群聊不存在") }
                 }
@@ -439,8 +439,12 @@ class GroupInfoViewModel(
                     val response = client.newCall(request).execute()
                     if (response.isSuccessful) {
                         val responseBody = response.body.string()
-                        val json = JSONObject(responseBody)
-                        json.optBoolean("success", false)
+                        try {
+                            val jsonElement = Json.parseToJsonElement(responseBody)
+                            jsonElement.jsonObject["success"]?.jsonPrimitive?.booleanOrNull ?: false
+                        } catch (e: Exception) {
+                            false
+                        }
                     } else false
                 }
 

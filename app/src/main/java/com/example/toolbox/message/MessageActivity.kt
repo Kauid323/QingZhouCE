@@ -100,16 +100,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil3.compose.AsyncImage
-import coil3.compose.rememberAsyncImagePainter
 import com.example.toolbox.ApiAddress
 import com.example.toolbox.TokenManager
 import com.example.toolbox.community.UserInfoActivity
 import com.example.toolbox.data.EditDialogState
 import com.example.toolbox.data.Message
+import com.example.toolbox.data.MessageDetailUiState
+import com.example.toolbox.data.MessagePagination
+import com.example.toolbox.data.RecallDialogState
+import com.example.toolbox.data.SendMessageRequest
+import com.example.toolbox.data.SendMessageResponse
 import com.example.toolbox.ui.theme.ToolBoxTheme
 import com.example.toolbox.utils.MarkdownRenderer
 import com.example.toolbox.utils.MultiImageViewer
+import coil3.compose.AsyncImage
+import coil3.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -119,6 +124,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private suspend fun sendFriendRequest(token: String, friendId: Int): Boolean {
@@ -170,15 +178,17 @@ class MessageDetailActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 从Intent获取聊天对象ID
-        val otherUserId = intent.getIntExtra("user_id", 0)
+        val chatType = intent.getIntExtra("chat_type", 1)
+        val chatId = intent.getIntExtra("chat_id", 0)
+        // 兼容旧的 user_id 参数
+        val finalChatId = if (chatId == 0) intent.getIntExtra("user_id", 0) else chatId
 
         setContent {
             ToolBoxTheme {
                 val token = TokenManager.get(this)
                 val context = LocalContext.current
                 val viewModel: MessageDetailViewModel = viewModel(
-                    factory = token?.let { MessageDetailViewModelFactory(it, otherUserId) }
+                    factory = token?.let { MessageDetailViewModelFactory(it, chatType, finalChatId) }
                 )
                 val uiState by viewModel.uiState.collectAsState()
 
@@ -187,64 +197,57 @@ class MessageDetailActivity : ComponentActivity() {
                     topBar = {
                         TopAppBar(
                             title = {
-                                if (uiState.otherUser != null) {
+                                if (uiState.messages.isNotEmpty()) {
+                                    val firstMessage = uiState.messages.first()
+                                    val title = if (chatType == 1) {
+                                        // 私聊显示对方名字
+                                        if (firstMessage.direction == "left") firstMessage.sender.name else "聊天"
+                                    } else {
+                                        // 群聊显示群名（待完善：从API获取群信息）
+                                        "群聊"
+                                    }
+                                    
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                startActivity(
-                                                    Intent(this, UserInfoActivity::class.java).apply {
-                                                        putExtra("userId", uiState.otherUser!!.id)
-                                                    }
-                                                )
-                                            }
-                                    ) {
-                                        AsyncImage(
-                                            model = uiState.otherUser!!.avatar,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(CircleShape)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        // 用户名和称号
-                                        Column {
-                                            Text(
-                                                text = uiState.otherUser!!.username,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 16.sp
-                                            )
-                                            if (uiState.otherUser!!.title.isNotBlank()) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 4.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        modifier = Modifier.size(14.dp),
-                                                        contentDescription = null,
-                                                        imageVector = Icons.Default.CheckCircle,
-                                                        tint = when (uiState.otherUser?.titleStatus) {
-                                                            1 -> MaterialTheme.colorScheme.error
-                                                            2 -> MaterialTheme.colorScheme.tertiary
-                                                            4 -> MaterialTheme.colorScheme.primary
-                                                            else -> MaterialTheme.colorScheme.onSurface
+                                                if (chatType == 1 && firstMessage.direction == "left") {
+                                                    startActivity(
+                                                        Intent(this, UserInfoActivity::class.java).apply {
+                                                            putExtra("userId", firstMessage.sender.chatId.toIntOrNull() ?: 0)
                                                         }
                                                     )
-                                                    Spacer(modifier = Modifier.width(5.dp))
-                                                    Text(
-                                                        text = uiState.otherUser?.title ?: "",
-                                                        style = MaterialTheme.typography.bodySmall
+                                                } else if (chatType == 2) {
+                                                    startActivity(
+                                                        Intent(this, GroupInfoActivity::class.java).apply {
+                                                            putExtra("group_id", chatId)
+                                                            putExtra("is_joined", true)
+                                                        }
                                                     )
                                                 }
                                             }
+                                    ) {
+                                        if (chatType == 1 && firstMessage.direction == "left") {
+                                            AsyncImage(
+                                                model = firstMessage.sender.avatarUrl,
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                        Column {
+                                            Text(
+                                                text = title,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 16.sp
+                                            )
                                         }
                                     }
                                 } else {
-                                    // 加载中或未知用户
                                     Text("聊天详情")
                                 }
                             },
@@ -386,12 +389,12 @@ fun MessageDetailScreen(
                 unreadCount += added.size
 
                 val topVisibleMessageId = visibleItems.firstOrNull()?.let { item ->
-                    newMessages.getOrNull(item.index)?.id
+                    newMessages.getOrNull(item.index)?.msgId
                 }
                 if (topVisibleMessageId != null) {
                     coroutineScope.launch {
                         delay(10)
-                        val newIndex = newMessages.indexOfFirst { it.id == topVisibleMessageId }
+                        val newIndex = newMessages.indexOfFirst { it.msgId == topVisibleMessageId }
                         if (newIndex != -1) {
                             listState.scrollToItem(newIndex, 0)
                         }
@@ -420,7 +423,7 @@ fun MessageDetailScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (uiState.relationship != "friend") {
+        if (uiState.chatType == 1 && !uiState.canSend) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.errorContainer,
@@ -443,10 +446,8 @@ fun MessageDetailScreen(
                         onClick = {
                             token?.let { tokenValue ->
                                 scope.launch {
-                                    val success = uiState.otherUser?.let {
-                                        sendFriendRequest(token = tokenValue, friendId = it.id)
-                                    }
-                                    if (success == true) {
+                                    val success = sendFriendRequest(token = tokenValue, friendId = uiState.chatId)
+                                    if (success) {
                                         Toast.makeText(context, "好友请求已发送", Toast.LENGTH_SHORT).show()
                                     } else {
                                         Toast.makeText(context, "发送失败，请重试", Toast.LENGTH_SHORT).show()
@@ -479,10 +480,10 @@ fun MessageDetailScreen(
                     reverseLayout = true,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(uiState.messages, key = { it.id }) { message ->
+                    items(uiState.messages, key = { it.msgId }) { message ->
                         MessageBubble(
                             message = message,
-                            onRecall = { viewModel.showRecallDialog(message.id) },
+                            onRecall = { viewModel.showRecallDialog(message.msgId) },
                             onEdit = { viewModel.showEditDialog(message) },
                             clipboard = clipboard,
                             context = context,
@@ -682,8 +683,18 @@ fun MessageBubble(
     onImageClick: (List<String>, Int) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val isMine = message.isMine
-    val isSystemMessage = message.isRecalled || message.isDeleted
+    val isMine = message.direction == "right"
+    val isSystemMessage = message.msgDeleteTime != null
+    
+    // 格式化时间
+    val timestampDisplay = remember(message.sendTime) {
+        try {
+            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+            sdf.format(Date(message.sendTime))
+        } catch (e: Exception) {
+            ""
+        }
+    }
 
     if (isSystemMessage) {
         Box(
@@ -699,11 +710,7 @@ fun MessageBubble(
                 modifier = Modifier.widthIn(max = 250.dp)
             ) {
                 Text(
-                    text = when {
-                        message.isRecalled -> message.recallHint ?: "消息已撤回"
-                        message.isDeleted -> "消息已删除"
-                        else -> ""
-                    },
+                    text = "消息已撤回",
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
@@ -718,6 +725,14 @@ fun MessageBubble(
             horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start
         ) {
             if (!isMine) {
+                AsyncImage(
+                    model = message.sender.avatarUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                )
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
@@ -729,79 +744,65 @@ fun MessageBubble(
 
                         },
                         onLongClick = {
-                            val hasContent = message.content.isNotBlank() || message.images.isNotEmpty()
-                            val canRecall = isMine && !message.isRecalled && !message.isDeleted
+                            val hasContent = message.content.text.isNotBlank()
+                            val canRecall = isMine && message.msgDeleteTime == null
                             if (hasContent || canRecall) {
                                 showMenu = true
                             }
                         }
                     )
             ) {
-                Card(
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isMine) 16.dp else 4.dp,
-                        bottomEnd = if (isMine) 4.dp else 16.dp
-                    ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isMine)
-                            MaterialTheme.colorScheme.primary.copy(0.2f)
-                        else
-                            MaterialTheme.colorScheme.surfaceContainer
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
-                        if (message.content.isNotBlank()) {
-                            if (message.isMarkdown) {
-                                MarkdownRenderer.Render(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    content = message.content
-                                )
-                            } else {
+                Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start) {
+                    if (!isMine) {
+                        Text(
+                            text = message.sender.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 2.dp)
+                        )
+                    }
+                    
+                    Card(
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isMine) 16.dp else 4.dp,
+                            bottomEnd = if (isMine) 4.dp else 16.dp
+                        ),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isMine)
+                                MaterialTheme.colorScheme.primary.copy(0.2f)
+                            else
+                                MaterialTheme.colorScheme.surfaceContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            if (message.content.text.isNotBlank()) {
+                                // 暂时不支持 markdown 判断，默认普通文本
                                 Text(
-                                    text = message.content,
+                                    text = message.content.text,
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                        }
 
-                        if (message.images.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Column {
-                                message.images.forEachIndexed { index, imageUrl ->
-                                    AsyncImage(
-                                        model = imageUrl,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(150.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { onImageClick(message.images, index) }  // 添加点击
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.align(if (isMine) Alignment.End else Alignment.Start)
-                        ) {
-                            Text(
-                                text = message.timestampDisplay,
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-
-                            if (message.isEdited) {
+                            Row(
+                                modifier = Modifier.align(if (isMine) Alignment.End else Alignment.Start)
+                            ) {
                                 Text(
-                                    text = "已编辑",
+                                    text = timestampDisplay,
                                     fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.padding(start = 4.dp)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+
+                                if (message.editTime != null) {
+                                    Text(
+                                        text = "已编辑",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 4.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -812,12 +813,12 @@ fun MessageBubble(
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier.align(if (isMine) Alignment.TopStart else Alignment.TopEnd)
                 ) {
-                    if (message.content.isNotBlank()) {
+                    if (message.content.text.isNotBlank()) {
                         DropdownMenuItem(
                             text = { Text("复制") },
                             onClick = {
                                 clipboard.nativeClipboard.setPrimaryClip(
-                                    ClipData.newPlainText("text", message.content)
+                                    ClipData.newPlainText("text", message.content.text)
                                 )
                                 showMenu = false
                                 Toast.makeText(context, "复制成功", Toast.LENGTH_SHORT).show()
@@ -832,7 +833,7 @@ fun MessageBubble(
                         )
                     }
 
-                    if (isMine && !message.isRecalled && !message.isDeleted) {
+                    if (isMine && message.msgDeleteTime == null) {
                         DropdownMenuItem(
                             text = { Text("撤回") },
                             onClick = {
@@ -848,7 +849,7 @@ fun MessageBubble(
                             }
                         )
                         
-                        if (message.content.isNotBlank()) {
+                        if (message.content.text.isNotBlank()) {
                             DropdownMenuItem(
                                 text = { Text("编辑") },
                                 onClick = {
@@ -870,6 +871,14 @@ fun MessageBubble(
 
             if (isMine) {
                 Spacer(modifier = Modifier.width(8.dp))
+                AsyncImage(
+                    model = message.sender.avatarUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                )
             }
         }
     }

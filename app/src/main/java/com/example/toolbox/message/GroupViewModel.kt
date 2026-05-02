@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.toolbox.ApiAddress
 import com.example.toolbox.AppJson
-import com.example.toolbox.community.uploadImageFile
+import com.example.toolbox.community.uploadImage
 import com.example.toolbox.data.CreateGroupRequest
 import com.example.toolbox.data.CreateGroupResponse
 import com.example.toolbox.data.GroupInfo
@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -102,7 +105,7 @@ class GroupViewModel(
             try {
                 // 先上传头像（如果有）
                 val avatarUrl = if (!avatarFilePath.isNullOrBlank()) {
-                    uploadImageFile(avatarFilePath, token, 1) { _ -> }
+                    uploadImage(avatarFilePath, token, 1) { _: Int -> }
                 } else {
                     null
                 }
