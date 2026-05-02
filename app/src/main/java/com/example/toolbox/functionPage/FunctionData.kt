@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Games
 import androidx.compose.material.icons.filled.MarkunreadMailbox
 import androidx.compose.material.icons.filled.Numbers
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.TextFields
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.filled.VideogameAsset
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Android
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.Image
@@ -41,7 +43,8 @@ object IconColorMap {
         "green" to Color(0xFF4CAF50),
         "orange" to Color(0xFFFF9800),
         "gray" to Color(0xFF9E9E9E),
-        "red" to Color(0xFFF44336)
+        "red" to Color(0xFFF44336),
+        "purple" to Color(0xFF9C27B0)
     )
     fun getColor(name: String?): Color? = name?.let { map[it] }
 }
@@ -127,6 +130,7 @@ val functionData = listOf(
         icon = Icons.Default.Style.asIcon,
         iconColorName = "green",
         functions = listOf(
+            FunctionItem("二维码生成", "com.example.toolbox.function.visual.QRCodeGeneratorActivity", Icons.Filled.QrCode, "purple"),
             FunctionItem("防OCR", "com.example.toolbox.function.visual.AntiOCRActivity", Icons.Outlined.HideImage, "blue"),
             FunctionItem("图片取色器", "com.example.toolbox.function.visual.ImageGetColorActivity", Icons.Outlined.Image, "yellow"),
             FunctionItem("MD3 配色参考", "com.example.toolbox.function.visual.MDColorSchemeActivity", Icons.Outlined.Style, "green"),
@@ -146,7 +150,7 @@ val functionData = listOf(
             FunctionItem("Base64编解码", "com.example.toolbox.function.text.Base64Activity", Icons.Outlined.TextFields, "orange"),
             FunctionItem("摩斯密码", "com.example.toolbox.function.text.MorseCodeActivity", Icons.Outlined.TextFields, "gray"),
             FunctionItem("RC4加解密", "com.example.toolbox.function.text.Rc4Activity", Icons.Outlined.Key, "red"),
-            FunctionItem("AES加解密", "com.example.toolbox.function.text.AESActivity", Icons.Outlined.Key, "blue")
+            FunctionItem("AES加解密", "com.example.toolbox.function.text.AESActivity", Icons.Outlined.Key, "blue"),
         )
     ),
     FunctionCategory(
@@ -164,7 +168,8 @@ val functionData = listOf(
         icon = Icons.Default.Settings.asIcon,
         iconColorName = "gray",
         functions = listOf(
-            FunctionItem("设备信息", "com.example.toolbox.function.system.DeviceInfoActivity", Icons.Outlined.Info, "gray")
+            FunctionItem("设备信息", "com.example.toolbox.function.system.DeviceInfoActivity", Icons.Outlined.Info, "gray"),
+            FunctionItem("Shell运行器", "com.example.toolbox.function.system.ShellRunnerActivity", Icons.Outlined.Code, "green")
         )
     ),
     FunctionCategory(

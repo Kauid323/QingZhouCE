@@ -1,14 +1,14 @@
 # 轻昼CE
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Kotlin-2.3.20-7F52FF?logo=kotlin" alt="Kotlin"/>
+  <img src="https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?logo=kotlin" alt="Kotlin"/>
   <img src="https://img.shields.io/badge/Jetpack%20Compose-1.9.0-4285F4?logo=android" alt="Compose"/>
   <img src="https://img.shields.io/badge/Material%20You-3.0-757575?logo=material-design" alt="Material You"/>
   <img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License"/>
   <img src="https://img.shields.io/github/stars/shijuhao/QingZhouCE?style=social" alt="Stars"/>
 </p>
 
-继承Lua开发的轻昼Ultra，使用Kotlin+Jetpack Compose开发，采用Material You设计，拥有**更快的速度、更小的占用、美观的UI**，且包含诸多实用功能以及社区功能。
+继承 Lua 开发的 轻昼Ultra，使用 Kotlin + Jetpack Compose 开发，采用 Material You 设计，拥有**更快的速度、更小的占用、美观的UI**，且包含诸多实用功能以及社区功能。
 
 ---
 
@@ -17,16 +17,16 @@
 <div align="center">
   <table>
     <tr>
-      <td align="center"><img src=".github/images/1.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>主界面</b></td>
-      <td align="center"><img src=".github/images/2.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>会话页面</b></td>
+      <td align="center"><img src=".github/images/1.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>主界面</b></td>
+      <td align="center"><img src=".github/images/2.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>会话页面</b></td>
     </tr>
     <tr>
-      <td align="center"><img src=".github/images/3.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>资源库页面</b></td>
-      <td align="center"><img src=".github/images/4.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>我的页面</b></td>
+      <td align="center"><img src=".github/images/3.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>资源库页面</b></td>
+      <td align="center"><img src=".github/images/4.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>我的页面</b></td>
     </tr>
     <tr>
-      <td align="center"><img src=".github/images/5.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>帖子列表页面</b></td>
-      <td align="center"><img src=".github/images/6.jpg" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>设置页面</b></td>
+      <td align="center"><img src=".github/images/5.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>帖子列表页面</b></td>
+      <td align="center"><img src=".github/images/6.webp" width="200" style="border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/> <br/><b>设置页面</b></td>
     </tr>
    </table>
 </div>

@@ -17,7 +17,7 @@ android {
         minSdk = 23
         targetSdk = 36
         versionCode = 1
-        versionName = "0.2.0"
+        versionName = "0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -118,6 +118,7 @@ dependencies {
     implementation(libs.customactivityoncrash)
     implementation(libs.luaj.jse)
     implementation(libs.exp4j)
+    implementation(libs.zxing.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)

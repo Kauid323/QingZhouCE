@@ -6,7 +6,10 @@ import android.os.Build
 
 data class AppVersionInfo(
     val versionName: String,
-    val versionCode: Long
+    val versionCode: Long,
+    val isSnapShotVersion: Boolean,
+    val baseVersion: String,
+    val commitHash: String
 )
 
 fun Context.getAppVersionInfo(): AppVersionInfo {
@@ -26,8 +29,25 @@ fun Context.getAppVersionInfo(): AppVersionInfo {
             @Suppress("DEPRECATION")
             packageInfo.versionCode.toLong()
         }
-        AppVersionInfo(versionName, versionCode)
+        val isSnapShotVersion = versionName.contains("-") && !versionName.startsWith("v")
+        val baseVersion = if (isSnapShotVersion) {
+            versionName.substringBefore("-")
+        } else {
+            versionName.removePrefix("v")
+        }
+        val commitHash = if (isSnapShotVersion) {
+            versionName.substringAfterLast("-")
+        } else {
+            ""
+        }
+        AppVersionInfo(
+            versionName = versionName,
+            versionCode = versionCode,
+            isSnapShotVersion = isSnapShotVersion,
+            baseVersion = baseVersion,
+            commitHash = commitHash
+        )
     } catch (_: PackageManager.NameNotFoundException) {
-        AppVersionInfo("未知", 0L)
+        AppVersionInfo("未知", 0L, false, "", "")
     }
 }

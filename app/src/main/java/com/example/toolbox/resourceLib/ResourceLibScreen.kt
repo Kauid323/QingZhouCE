@@ -3,7 +3,6 @@
 package com.example.toolbox.resourceLib
 
 import android.content.Intent
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
@@ -36,7 +35,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +51,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -68,13 +68,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.example.toolbox.MainViewModel
 import com.example.toolbox.data.community.ResourceItem
+import com.example.toolbox.utils.UserAvatar
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ResourceLibScreen(
     onMenuClick: () -> Unit = {},
-    viewModel: ResourceViewModel = viewModel()
+    viewModel: ResourceViewModel = viewModel(),
+    mainViewModel: MainViewModel? = null
 ) {
     val context = LocalContext.current
 
@@ -92,9 +95,21 @@ fun ResourceLibScreen(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+    var isSearching by remember { mutableStateOf(false) }
+    var hasSearched by remember { mutableStateOf(false) } // 标记是否已执行过搜索
 
-    val filteredList = remember(searchQuery, viewModel.resourceList) {
-        viewModel.resourceList.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    // 只有执行过搜索后才显示搜索结果
+    val displayList = if (isSearchActive && hasSearched) {
+        viewModel.searchResultList
+    } else {
+        emptyList()
+    }
+
+    // 监听加载状态，加载完成后重置 isSearching
+    LaunchedEffect(viewModel.isLoading) {
+        if (!viewModel.isLoading && isSearching) {
+            isSearching = false
+        }
     }
 
     LaunchedEffect(selectedTabIndex) {
@@ -108,57 +123,79 @@ fun ResourceLibScreen(
 
     Scaffold(
         topBar = {
-            // 使用 AnimatedContent 实现标题栏和搜索栏的平滑切换
             AnimatedContent(
                 targetState = isSearchActive,
                 transitionSpec = {
-                    // 根据状态决定进入/退出方向
                     if (targetState) {
-                        // 进入搜索：从右侧滑入 + 淡入
                         slideInHorizontally(initialOffsetX = { it }) + fadeIn() togetherWith
                                 slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
                     } else {
-                        // 退出搜索：从左侧滑出 + 淡出
                         slideInHorizontally(initialOffsetX = { -it }) + fadeIn() togetherWith
                                 slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-                    }.using(SizeTransform(clip = false)) // 尺寸变换不裁剪
+                    }.using(SizeTransform(clip = false))
                 },
                 label = "topBarTransition"
-            ) { isSearching ->
-                if (isSearching) {
-                    // 搜索状态：显示全屏搜索栏
+            ) { targetIsSearching ->
+                if (targetIsSearching) {
                     SearchBar(
                         modifier = Modifier.fillMaxWidth(),
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        onSearch = { /* 保持搜索栏打开，不做额外操作 */ },
-                        active = true, // 一出现就是展开状态
+                        onSearch = { 
+                            if (searchQuery.isNotBlank()) {
+                                isSearching = true
+                                hasSearched = true
+                                viewModel.searchResources(searchQuery, categoryId = null)
+                            }
+                        },
+                        active = true,
                         onActiveChange = { active ->
                             if (!active) {
                                 isSearchActive = false
+                                isSearching = false
+                                hasSearched = false
+                                searchQuery = ""
+                                val categoryId = when (selectedTabIndex) {
+                                    0 -> 2
+                                    8 -> 1
+                                    else -> selectedTabIndex + 2
+                                }
+                                viewModel.fetchResources(categoryId)
                             }
                         },
-                        placeholder = { Text("搜索该区资源") },
+                        placeholder = { Text("搜索全区资源") },
                         leadingIcon = {
                             IconButton(onClick = { isSearchActive = false }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                             }
                         },
                         trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, "清除")
+                            IconButton(onClick = {
+                                if (searchQuery.isNotBlank()) {
+                                    isSearching = true
+                                    hasSearched = true
+                                    viewModel.searchResources(searchQuery, categoryId = null)
                                 }
+                            }) {
+                                Icon(Icons.Default.Search, "搜索")
                             }
                         }
                     ) {
-                        // 搜索结果列表
                         Column {
                             HorizontalDivider(
                                 modifier = Modifier.fillMaxWidth(),
                                 thickness = 0.5.dp
                             )
-                            if (filteredList.isEmpty() && searchQuery.isNotEmpty()) {
+                            if (isSearching && viewModel.isLoading) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(top = 32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    ContainedLoadingIndicator()
+                                }
+                            } else if (hasSearched && displayList.isEmpty()) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -170,9 +207,21 @@ fun ResourceLibScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                            } else if (!hasSearched) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(top = 32.dp),
+                                    contentAlignment = Alignment.TopCenter
+                                ) {
+                                    Text(
+                                        "输入关键词搜索资源",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             } else {
                                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                    items(filteredList) { item ->
+                                    items(displayList) { item ->
                                         ResourceCard(item) {
                                             val intent =
                                                 Intent(context, ResourceDetailActivity::class.java).apply {
@@ -194,12 +243,19 @@ fun ResourceLibScreen(
                         }
                     }
                 } else {
-                    // 非搜索状态：显示普通标题栏（可包含标题和搜索图标）
                     TopAppBar(
                         title = { Text("资源库") },
                         actions = {
                             IconButton(onClick = { isSearchActive = true }) {
                                 Icon(Icons.Default.Search, contentDescription = "搜索")
+                            }
+                            
+                            if (mainViewModel != null) {
+                                val userInfo by mainViewModel.userInfo.collectAsState()
+                                UserAvatar(
+                                    avatarUrl = userInfo.avatar,
+                                    userId = userInfo.id
+                                )
                             }
                         },
                         navigationIcon = {
@@ -238,7 +294,7 @@ fun ResourceLibScreen(
 
             Box(modifier = Modifier.fillMaxSize()) {
                 if (viewModel.isLoading) {
-                    CircularWavyProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    ContainedLoadingIndicator(modifier = Modifier.align(Alignment.Center))
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

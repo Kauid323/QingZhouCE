@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -57,10 +58,11 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -175,7 +177,6 @@ class MessageDetailActivity : ComponentActivity() {
             ToolBoxTheme {
                 val token = TokenManager.get(this)
                 val context = LocalContext.current
-                val scope = rememberCoroutineScope()
                 val viewModel: MessageDetailViewModel = viewModel(
                     factory = token?.let { MessageDetailViewModelFactory(it, otherUserId) }
                 )
@@ -254,40 +255,6 @@ class MessageDetailActivity : ComponentActivity() {
                                         contentDescription = "返回"
                                     )
                                 }
-                            },
-                            actions = {
-                                if (uiState.relationship != "friend") {
-                                    IconButton(onClick = {
-                                        token?.let { tokenValue ->
-                                            scope.launch {
-                                                val success = uiState.otherUser?.let {
-                                                    sendFriendRequest(
-                                                        token = tokenValue,
-                                                        friendId = it.id
-                                                    )
-                                                }
-                                                if (success == true) {
-                                                    Toast.makeText(
-                                                        context,
-                                                        "好友请求已发送",
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                } else {
-                                                    Toast.makeText(
-                                                        context,
-                                                        "发送失败，请重试",
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                            }
-                                        }
-                                    }) {
-                                        Icon(
-                                            Icons.Default.PersonAdd,
-                                            contentDescription = "添加好友"
-                                        )
-                                    }
-                                }
                             }
                         )
                     }
@@ -301,13 +268,15 @@ class MessageDetailActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MessageDetailScreen(
     innerPadding: PaddingValues,
     viewModel: MessageDetailViewModel
 ) {
     val context = LocalContext.current
+    val token = TokenManager.get(context)
+    val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val uiState by viewModel.uiState.collectAsState()
     var previousMessages by remember { mutableStateOf(uiState.messages) }
@@ -442,13 +411,8 @@ fun MessageDetailScreen(
     }
 
     if (showImageViewer) {
-        val painters = imageViewerUrls.map { url ->
-            rememberAsyncImagePainter(
-                model = url
-            )
-        }
         MultiImageViewer(
-            images = painters,
+            images = imageViewerUrls,
             initialPage = imageViewerInitialPage,
             isVisible = showImageViewer,
             onDismiss = { showImageViewer = false }
@@ -456,6 +420,53 @@ fun MessageDetailScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (uiState.relationship != "friend") {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.errorContainer,
+                tonalElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "你们不是好友，此对话具有时限性",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Button(
+                        onClick = {
+                            token?.let { tokenValue ->
+                                scope.launch {
+                                    val success = uiState.otherUser?.let {
+                                        sendFriendRequest(token = tokenValue, friendId = it.id)
+                                    }
+                                    if (success == true) {
+                                        Toast.makeText(context, "好友请求已发送", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "发送失败，请重试", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.PersonAdd,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("添加好友")
+                    }
+                }
+            }
+        }
+    
         Box(modifier = Modifier.weight(1f)) {
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -468,15 +479,7 @@ fun MessageDetailScreen(
                     reverseLayout = true,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (uiState.relationship != "friend") {
-                        item {
-                            SystemMessageBubble(
-                                text = "你们不是好友，此对话具有时限性"
-                            )
-                        }
-                    }
-
-                    items(uiState.messages) { message ->
+                    items(uiState.messages, key = { it.id }) { message ->
                         MessageBubble(
                             message = message,
                             onRecall = { viewModel.showRecallDialog(message.id) },
@@ -499,7 +502,7 @@ fun MessageDetailScreen(
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator()
+                                ContainedLoadingIndicator()
                             }
                         }
                     }
@@ -524,22 +527,52 @@ fun MessageDetailScreen(
             )
         }
 
-        MessageInput(
-            inputText = uiState.inputText,
-            selectedImages = uiState.selectedImages,
-            isMarkdown = uiState.isMarkdown,
-            onTextChange = { viewModel.updateInputText(it) },
-            onSendClick = {
-                viewModel.sendMessage()
-                coroutineScope.launch {
-                    listState.animateScrollToItem(0)
+        if (uiState.isChatExpired) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(0.4f),
+                shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(bottom = innerPadding.calculateBottomPadding()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "此对话已过期，无法发送消息",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            },
-            onAddImageClick = { imagePicker.launch("image/*") },
-            onRemoveImage = { viewModel.removeImage(it) },
-            onToggleMarkdown = { viewModel.toggleMarkdown() },
-            innerPadding = innerPadding,
-        )
+            }
+        } else {
+            MessageInput(
+                inputText = uiState.inputText,
+                selectedImages = uiState.selectedImages,
+                isMarkdown = uiState.isMarkdown,
+                onTextChange = { viewModel.updateInputText(it) },
+                onSendClick = {
+                    viewModel.sendMessage()
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(0)
+                    }
+                },
+                onAddImageClick = { imagePicker.launch("image/*") },
+                onRemoveImage = { viewModel.removeImage(it) },
+                onToggleMarkdown = { viewModel.toggleMarkdown() },
+                innerPadding = innerPadding,
+            )
+        }
     }
 
     // 撤回确认弹窗
@@ -838,32 +871,6 @@ fun MessageBubble(
             if (isMine) {
                 Spacer(modifier = Modifier.width(8.dp))
             }
-        }
-    }
-}
-
-@Composable
-fun SystemMessageBubble(
-    text: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.widthIn(max = 250.dp)
-        ) {
-            Text(
-                text = text,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
         }
     }
 }

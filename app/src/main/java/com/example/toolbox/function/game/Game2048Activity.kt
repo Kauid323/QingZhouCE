@@ -7,21 +7,27 @@ import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.*
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -32,6 +38,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -43,8 +50,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.random.Random
 import androidx.core.content.edit
-
-// ==================== 数据模型 ====================
 
 data class GameState(
     val grid: Array<IntArray> = Array(4) { IntArray(4) },
@@ -84,10 +89,10 @@ data class MoveInfo(
 
 data class GameSnapshot(
     val grid: List<List<Int>>,
-    val score: Int
+    val score: Int,
+    val moves: List<MoveInfo> = emptyList(),
+    val spawnPos: Pair<Int, Int>? = null
 )
-
-// ==================== 游戏逻辑 ====================
 
 class Game2048Logic {
     companion object {
@@ -138,7 +143,6 @@ class Game2048Logic {
                     origins[j] = Pair(r, c)
                 }
 
-                // 压缩并合并
                 val packed = mutableListOf<Int>()
                 val packedOrig = mutableListOf<Pair<Int, Int>>()
                 for (j in 0 until SIZE) {
@@ -196,7 +200,6 @@ enum class Direction {
     }
 }
 
-// ==================== ViewModel ====================
 
 class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
     private val _gameState = mutableStateOf(loadGameState())
@@ -208,11 +211,6 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
     private val _pendingMerges = mutableStateOf<Set<Pair<Int, Int>>>(emptySet())
     val pendingMerges: State<Set<Pair<Int, Int>>> = _pendingMerges
 
-    private val _spawningTiles = mutableStateOf<Set<Pair<Int, Int>>>(emptySet())
-    val spawningTiles: State<Set<Pair<Int, Int>>> = _spawningTiles
-
-    private val _animatedGrid = mutableStateOf<Array<IntArray>?>(null)
-    val animatedGrid: State<Array<IntArray>?> = _animatedGrid
 
     private var undoSave: GameSnapshot? = null
     private var isAnimating = false
@@ -283,16 +281,16 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
 
         if (!changed) return
 
-        // 保存撤销快照
         undoSave = GameSnapshot(
             grid = current.grid.map { it.toList() },
-            score = current.score
+            score = current.score,
+            moves = moves,
+            spawnPos = null
         )
 
         val newScore = current.score + gain
         val newBest = max(newScore, current.bestScore)
 
-        // 检查胜利
         var won = current.gameWon
         if (!won) {
             for (r in 0 until 4) {
@@ -310,19 +308,16 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
         _pendingMoves.value = moves
         _pendingMerges.value = moves.filter { it.merged }.map { Pair(it.toRow, it.toCol) }.toSet()
 
-        _animatedGrid.value = current.grid
-
-        delay(180)
+        delay(120)
 
         _pendingMoves.value = emptyList()
         _pendingMerges.value = emptySet()
-        _animatedGrid.value = null
 
         val spawnPos = Game2048Logic.spawnTile(gridAfterMove)
         val gameOver = !Game2048Logic.hasMovesLeft(gridAfterMove)
 
-        if (spawnPos != null) {
-            _spawningTiles.value = setOf(spawnPos)
+        if (spawnPos != null && undoSave != null) {
+            undoSave = undoSave!!.copy(spawnPos = spawnPos)
         }
 
         _gameState.value = GameState(
@@ -332,11 +327,6 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
             gameOver = gameOver,
             gameWon = won
         )
-
-        if (spawnPos != null) {
-            delay(150)
-            _spawningTiles.value = emptySet()
-        }
 
         isAnimating = false
         saveGameState()
@@ -351,6 +341,9 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
     fun undo() {
         if (isAnimating) return
         val snapshot = undoSave ?: return
+        
+        isAnimating = true
+        
         _gameState.value = GameState(
             grid = snapshot.grid.map { it.toIntArray() }.toTypedArray(),
             score = snapshot.score,
@@ -360,6 +353,8 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
         )
         undoSave = null
         saveGameState()
+        
+        isAnimating = false
     }
 
     private fun checkHas2048(grid: Array<IntArray>): Boolean {
@@ -372,26 +367,50 @@ class GameViewModel(private val prefs: SharedPreferences) : ViewModel() {
     }
 }
 
-// ==================== UI 样式 ====================
+@Composable
+fun getTileColors(): Map<Int, Color> {
+    val colorScheme = MaterialTheme.colorScheme
+    val primaryColor = colorScheme.primary
+    val errorColor = colorScheme.error
 
-val TileColors = mapOf(
-    0 to Color(0x1AFFFFFF),
-    2 to Color(0xFFEEE4DA),
-    4 to Color(0xFFEDE0C8),
-    8 to Color(0xFFF2B179),
-    16 to Color(0xFFF59563),
-    32 to Color(0xFFF67C5F),
-    64 to Color(0xFFF65E3B),
-    128 to Color(0xFFEDCF72),
-    256 to Color(0xFFEDCC61),
-    512 to Color(0xFFEDC850),
-    1024 to Color(0xFFEDC53F),
-    2048 to Color(0xFFEDC22E)
-)
+    val blendedColor = Color(
+        androidx.core.graphics.ColorUtils.blendARGB(
+            primaryColor.value.toInt(),
+            errorColor.value.toInt(),
+            0.4f
+        )
+    )
+    
+    return mapOf(
+        0 to colorScheme.onSurface.copy(alpha = 0.06f),
+        2 to colorScheme.surfaceVariant,
+        4 to colorScheme.secondaryContainer,
+        8 to colorScheme.primaryContainer,
+        16 to colorScheme.inversePrimary,
+        32 to colorScheme.tertiaryContainer,
+        64 to colorScheme.errorContainer,
+        128 to colorScheme.tertiary,
+        256 to colorScheme.secondary,
+        512 to colorScheme.primary,
+        1024 to blendedColor,
+        2048 to colorScheme.error
+    )
+}
 
-fun tileColor(value: Int) = TileColors[value] ?: Color(0xFF3C3A32)
-fun tileTextColor(value: Int) = if (value in listOf(2, 4)) Color(0xFF776E65) else Color.White
+@Composable
+fun tileColor(value: Int): Color {
+    val colors = getTileColors()
+    val colorScheme = MaterialTheme.colorScheme
+    return colors[value] ?: colorScheme.outline
+}
 
+@Composable
+fun tileTextColor(value: Int): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    return if (value in listOf(2, 4)) colorScheme.onSurfaceVariant else Color.White
+}
+
+@Composable
 fun tileTextSize(value: Int): Float = when {
     value < 100 -> 42f
     value < 1000 -> 36f
@@ -399,7 +418,13 @@ fun tileTextSize(value: Int): Float = when {
     else -> 24f
 }
 
-// ==================== Composable 屏幕 ====================
+@Composable
+fun labelTextSp(value: Int): TextUnit = when {
+    value < 1000 -> 18.sp
+    value < 10000 -> 17.sp
+    else -> 16.sp
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -410,11 +435,9 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
     val gameState by viewModel.gameState
     val pendingMoves by viewModel.pendingMoves
 
-    // 用于显示得分增加动画
     var lastScore by remember { mutableIntStateOf(gameState.score) }
     var scoreGain by remember { mutableIntStateOf(0) }
 
-    // 当分数增加时记录增量并触发动画
     LaunchedEffect(gameState.score) {
         if (gameState.score > lastScore) {
             scoreGain = gameState.score - lastScore
@@ -424,19 +447,23 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
         lastScore = gameState.score
     }
 
-    // 游戏胜利/结束的弹窗显示
-    var showWinDialog by remember { mutableStateOf(false) }
-    var showGameOverDialog by remember { mutableStateOf(false) }
+    var showWinOverlay by remember { mutableStateOf(false) }
+    var showGameOverOverlay by remember { mutableStateOf(false) }
+    var gameOverAnimToken by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(gameState.gameWon) {
-        if (gameState.gameWon && !showWinDialog) {
-            showWinDialog = true
+        if (gameState.gameWon && !showWinOverlay) {
+            showWinOverlay = true
             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            delay(1700)
+            showWinOverlay = false
         }
     }
+    
     LaunchedEffect(gameState.gameOver) {
-        if (gameState.gameOver && !showGameOverDialog && gameState.score > 0) {
-            showGameOverDialog = true
+        if (gameState.gameOver && !showGameOverOverlay && gameState.score > 0) {
+            gameOverAnimToken++
+            showGameOverOverlay = true
             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         }
     }
@@ -474,7 +501,7 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(IntrinsicSize.Min),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     AnimatedScoreCard("分数", gameState.score, scoreGain, Modifier.weight(1f))
                     ScoreCard("最佳", gameState.bestScore, Modifier.weight(1f))
@@ -482,7 +509,6 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // 控制按钮
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -490,7 +516,9 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Button(
-                        onClick = { viewModel.undo() },
+                        onClick = { 
+                            scope.launch { viewModel.undo() }
+                        },
                         enabled = viewModel.canUndo() && !gameState.gameOver,
                         modifier = Modifier
                             .weight(1f)
@@ -499,7 +527,11 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
                         Text("撤回")
                     }
                     Button(
-                        onClick = { viewModel.startNewGame() },
+                        onClick = { 
+                            showGameOverOverlay = false
+                            showWinOverlay = false
+                            viewModel.startNewGame()
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
@@ -510,27 +542,29 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // 棋盘 - 使用动态计算的最大尺寸
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .pointerInput(Unit) {
+                            var lastMoveTime = 0L
                             detectDragGestures(
                                 onDragStart = {},
                                 onDragEnd = {},
                                 onDragCancel = {}
                             ) { change, dragAmount ->
                                 change.consume()
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastMoveTime < 200) return@detectDragGestures
+                                
                                 val (dx, dy) = dragAmount
                                 val direction = when {
-                                    abs(dx) > abs(dy) && abs(dx) > 20f -> if (dx > 0) Direction.RIGHT else Direction.LEFT
-                                    abs(dy) > abs(dx) && abs(dy) > 20f -> if (dy > 0) Direction.DOWN else Direction.UP
+                                    abs(dx) > abs(dy) && abs(dx) > 30f -> if (dx > 0) Direction.RIGHT else Direction.LEFT
+                                    abs(dy) > abs(dx) && abs(dy) > 30f -> if (dy > 0) Direction.DOWN else Direction.UP
                                     else -> null
                                 }
                                 direction?.let {
+                                    lastMoveTime = currentTime
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                     scope.launch { viewModel.move(it) }
                                 }
@@ -539,17 +573,89 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
                 ) {
                     GameGrid(
                         grid = gameState.grid,
-                        animatedGrid = viewModel.animatedGrid.value,
                         pendingMoves = pendingMoves,
                         pendingMerges = viewModel.pendingMerges.value,
-                        spawningTiles = viewModel.spawningTiles.value,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        isGameOver = gameState.gameOver,
+                        gameOverAnimToken = gameOverAnimToken
                     )
+
+                    if (showGameOverOverlay) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(16.dp))  // 与棋盘相同的圆角
+                                .background(Color.Black.copy(alpha = 0.67f))
+                                .pointerInput(Unit) { /* 阻止点击穿透 */ },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "游戏结束",
+                                    fontSize = 34.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primaryFixed,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "得分：${gameState.score}",
+                                    fontSize = 20.sp,
+                                    color = MaterialTheme.colorScheme.primaryFixedDim,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "点击「新游戏」再来一局",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.secondaryFixedDim,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    if (showWinOverlay) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(16.dp))  // 与棋盘相同的圆角
+                                .background(Color.Black.copy(alpha = 0.67f))
+                                .pointerInput(Unit) { /* 阻止点击穿透 */ },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "2048",
+                                    fontSize = 68.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primaryFixedDim,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "游戏胜利",
+                                    fontSize = 26.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primaryFixed,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "你仍可以继续游戏",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.secondaryFixedDim,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // 游戏说明 - 小屏幕时自动滚动可见
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -577,28 +683,18 @@ fun Game2048Screen(viewModel: GameViewModel = viewModel()) {
             }
         }
 
-        // 弹窗
-        if (showWinDialog) {
-            WinDialog(onDismiss = { showWinDialog = false })
-        }
-        if (showGameOverDialog) {
-            GameOverDialog(
-                score = gameState.score,
-                onNewGame = {
-                    viewModel.startNewGame()
-                    showGameOverDialog = false
-                },
-                onDismiss = { showGameOverDialog = false }
-            )
-        }
+
     }
 }
 
 @Composable
 fun ScoreCard(title: String, score: Int, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp)
+    
     Card(
         modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = shape
     ) {
         Column(
             modifier = Modifier
@@ -606,10 +702,10 @@ fun ScoreCard(title: String, score: Int, modifier: Modifier = Modifier) {
                 .padding(vertical = 8.dp, horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 score.toString(),
-                fontSize = 20.sp,
+                fontSize = labelTextSp(score),
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -620,9 +716,12 @@ fun ScoreCard(title: String, score: Int, modifier: Modifier = Modifier) {
 
 @Composable
 fun AnimatedScoreCard(title: String, score: Int, gain: Int, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 4.dp, bottomEnd = 4.dp)
+
     Card(
         modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = shape
     ) {
         Column(
             modifier = Modifier
@@ -630,16 +729,15 @@ fun AnimatedScoreCard(title: String, score: Int, gain: Int, modifier: Modifier =
                 .padding(vertical = 8.dp, horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Box {
                 Text(
                     score.toString(),
-                    fontSize = 20.sp,
+                    fontSize = labelTextSp(score),
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
                 if (gain > 0) {
-                    @Suppress("RemoveRedundantQualifierName")
                     androidx.compose.animation.AnimatedVisibility(
                         visible = true,
                         enter = fadeIn() + slideInVertically(initialOffsetY = { -it }) + scaleIn(),
@@ -662,17 +760,30 @@ fun AnimatedScoreCard(title: String, score: Int, gain: Int, modifier: Modifier =
 @Composable
 fun GameGrid(
     grid: Array<IntArray>,
-    animatedGrid: Array<IntArray>?,
     pendingMoves: List<MoveInfo>,
     pendingMerges: Set<Pair<Int, Int>>,
-    spawningTiles: Set<Pair<Int, Int>>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isGameOver: Boolean = false,
+    gameOverAnimToken: Int = 0
 ) {
     var cellSizePx by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
 
     val moveAnimations = remember { mutableStateMapOf<String, Animatable<Offset, AnimationVector2D>>() }
     val mergeAnimations = remember { mutableStateMapOf<String, Animatable<Float, AnimationVector1D>>() }
+    val grayedAlphas = remember { mutableStateMapOf<String, Animatable<Float, AnimationVector1D>>() }
+
+    val moveMap = remember(pendingMoves) {
+        pendingMoves.associateBy { move -> Pair(move.fromRow, move.fromCol) }
+    }
+
+    val mergedTargets = remember(pendingMoves) {
+        pendingMoves.filter { it.merged }.map { Pair(it.toRow, it.toCol) }.toSet()
+    }
+
+    val receivingCells = remember(pendingMoves) {
+        pendingMoves.map { Pair(it.toRow, it.toCol) }.toSet()
+    }
 
     LaunchedEffect(pendingMoves) {
         if (pendingMoves.isEmpty()) return@LaunchedEffect
@@ -680,6 +791,8 @@ fun GameGrid(
         while (cellSizePx == 0f) {
             delay(10)
         }
+
+        val decelerateEasing = CubicBezierEasing(0f, 0f, 0.2f, 1f)
 
         pendingMoves.forEach { move ->
             val fromKey = "${move.fromRow},${move.fromCol}"
@@ -691,7 +804,7 @@ fun GameGrid(
             scope.launch {
                 animatable.animateTo(
                     Offset(deltaX, deltaY),
-                    animationSpec = tween(150, easing = FastOutSlowInEasing)
+                    animationSpec = tween(120, easing = decelerateEasing)
                 )
                 moveAnimations.remove(fromKey)
             }
@@ -705,78 +818,96 @@ fun GameGrid(
                 Animatable(1f, Float.VectorConverter)
             }
             scope.launch {
-                animatable.animateTo(1.25f, animationSpec = tween(80))
-                animatable.animateTo(1f, animationSpec = tween(100))
-                delay(50)
+                animatable.animateTo(1.15f, animationSpec = tween(70))
+                animatable.animateTo(1f, animationSpec = tween(70))
                 mergeAnimations.remove(key)
             }
         }
     }
 
-    val displayGrid = animatedGrid ?: grid
+    LaunchedEffect(isGameOver, gameOverAnimToken) {
+        if (!isGameOver) {
+            grayedAlphas.clear()
+            return@LaunchedEffect
+        }
 
-    Box(
-        modifier = modifier
-            .onGloballyPositioned { coordinates ->
-                cellSizePx = coordinates.size.width.toFloat() / 4f
+        for (row in 0 until 4) {
+            val rowDelay = 300 + row * 150L
+
+            for (col in 0 until 4) {
+                val key = "$row,$col"
+                scope.launch {
+                    delay(rowDelay)
+                    val animatable = Animatable(1f, Float.VectorConverter)
+                    grayedAlphas[key] = animatable
+                    animatable.animateTo(0.30f, animationSpec = tween(300, easing = FastOutSlowInEasing))
+                }
             }
-            .padding(8.dp)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            for (row in 0 until 4) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    for (col in 0 until 4) {
-                        val isSource = pendingMoves.any { it.fromRow == row && it.fromCol == col }
-                        val isTarget = pendingMoves.any { it.toRow == row && it.toCol == col }
-                        val mergeTarget = pendingMerges.contains(Pair(row, col))
+        }
+    }
 
-                        val moveOffset = moveAnimations["$row,$col"]?.value
+    Box(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
 
-                        val mergeScale = if (mergeTarget) {
-                            mergeAnimations["$row,$col"]?.value ?: 1f
-                        } else 1f
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(8.dp)
+                .onGloballyPositioned { coordinates ->
+                    cellSizePx = coordinates.size.width.toFloat() / 4f
+                }
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                for (row in 0 until 4) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        for (col in 0 until 4) {
+                            val moveInfo = moveMap[Pair(row, col)]
+                            val mergeTarget = pendingMerges.contains(Pair(row, col))
 
-                        var displayValue = displayGrid[row][col]
+                            val moveOffset = if (moveInfo != null) {
+                                moveAnimations["$row,$col"]?.value
+                            } else null
 
-                        if (isSource && moveOffset != null) {
-                            displayValue = displayGrid[row][col]
-                        }
+                            val mergeScale = if (mergeTarget) {
+                                mergeAnimations["$row,$col"]?.value ?: 1f
+                            } else 1f
 
-                        val isMergedTarget = pendingMoves.any { it.toRow == row && it.toCol == col && it.merged }
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            if (!isTarget || moveOffset == null) {
-                                Tile(
-                                    value = displayValue,
-                                    modifier = Modifier.fillMaxSize(),
-                                    moveOffset = moveOffset,
-                                    mergeScale = mergeScale,
-                                    isSpawning = spawningTiles.contains(Pair(row, col)),
-                                    isMerged = isMergedTarget
-                                )
+                            val displayValue = if (moveInfo != null) {
+                                grid[moveInfo.fromRow][moveInfo.fromCol]
+                            } else {
+                                grid[row][col]
                             }
 
-                            if (isSource && moveOffset != null && displayValue != 0) {
+                            val isMergedTarget = mergedTargets.contains(Pair(row, col))
+                            val isReceiving = receivingCells.contains(Pair(row, col))
+                            val showValue = if (isReceiving) 0 else displayValue
+
+                            key(row, col) {
                                 Tile(
-                                    value = displayValue,
-                                    modifier = Modifier.fillMaxSize(),
+                                    value = showValue,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
                                     moveOffset = moveOffset,
-                                    mergeScale = 1f,
-                                    isSpawning = false,
-                                    isMoving = true
+                                    mergeScale = mergeScale,
+                                    isMoving = moveInfo != null,
+                                    isMerged = isMergedTarget,
+                                    grayAlpha = grayedAlphas["$row,$col"]?.value ?: 1f,
+                                    isGrayed = isGameOver && grayedAlphas.containsKey("$row,$col")
                                 )
                             }
                         }
                     }
+                    if (row < 3) Spacer(modifier = Modifier.height(8.dp))
                 }
-                if (row < 3) Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
@@ -788,106 +919,51 @@ fun Tile(
     modifier: Modifier = Modifier,
     moveOffset: Offset? = null,
     mergeScale: Float = 1f,
-    isSpawning: Boolean = false,
     isMoving: Boolean = false,
-    isMerged: Boolean = false
+    isMerged: Boolean = false,
+    grayAlpha: Float = 1f,
+    isGrayed: Boolean = false
 ) {
     val backgroundColor = tileColor(value)
     val textColor = tileTextColor(value)
     val textSize = tileTextSize(value)
 
-    // 生成动画
-    val spawnScale = remember { Animatable(0f) }
-    LaunchedEffect(isSpawning) {
-        if (isSpawning) {
-            spawnScale.snapTo(0f)
-            spawnScale.animateTo(
-                1f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                )
-            )
-        }
-    }
-    val finalSpawnScale = if (isSpawning) spawnScale.value else 1f
-
-    // 合并时的闪烁效果
     val mergedFlash by animateColorAsState(
         targetValue = if (isMerged) Color(0xFFFFD700) else backgroundColor,
-        animationSpec = tween(150),
+        animationSpec = tween(140),
         label = "mergedFlash"
     )
 
-    val finalColor = if (isMerged) mergedFlash else backgroundColor
-
-    Card(
+    val displayColor = if (isGrayed) MaterialTheme.colorScheme.surfaceVariant else (if (isMerged) mergedFlash else backgroundColor)
+    val displayTextColor = if (isGrayed) MaterialTheme.colorScheme.onSurfaceVariant else textColor
+        
+    val tileAlpha = grayAlpha * (if (isMoving) 0.9f else 1f)
+    
+    Box(
         modifier = modifier
             .graphicsLayer {
                 translationX = moveOffset?.x ?: 0f
                 translationY = moveOffset?.y ?: 0f
-                scaleX = finalSpawnScale * mergeScale
-                scaleY = finalSpawnScale * mergeScale
-                // 移动中的瓦片增加透明度
-                alpha = if (isMoving) 0.9f else 1f
-            },
-        colors = CardDefaults.cardColors(containerColor = finalColor),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = if (isMoving) 6.dp else 2.dp
-        )
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            if (value != 0) {
-                Text(
-                    text = value.toString(),
-                    fontSize = textSize.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = textColor,
-                    textAlign = TextAlign.Center
-                )
+                scaleX = mergeScale
+                scaleY = mergeScale
+                alpha = tileAlpha
             }
+            .clip(RoundedCornerShape(12.dp))
+            .background(displayColor),
+        contentAlignment = Alignment.Center
+    ) {
+        if (value != 0) {
+            Text(
+                text = value.toString(),
+                fontSize = textSize.sp,
+                fontWeight = FontWeight.Bold,
+                color = displayTextColor,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
 
-@Composable
-fun GameOverDialog(score: Int, onNewGame: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("游戏结束") },
-        text = { Text("您的得分：$score") },
-        confirmButton = {
-            Button(onClick = onNewGame) {
-                Text("新游戏")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        }
-    )
-}
-
-@Composable
-fun WinDialog(onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("🎉 胜利！") },
-        text = { Text("您达到了 2048！\n可以继续游戏挑战更高分数。") },
-        confirmButton = {
-            Button(onClick = onDismiss) {
-                Text("继续")
-            }
-        }
-    )
-}
-
-// ==================== Activity ====================
 
 class Game2048Activity : ComponentActivity() {
     private lateinit var prefs: SharedPreferences

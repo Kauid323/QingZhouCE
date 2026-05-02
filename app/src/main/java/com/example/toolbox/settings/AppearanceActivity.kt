@@ -130,7 +130,7 @@ class ThemeActivity : ComponentActivity() {
                     topBar = {
                         LargeTopAppBar(
                             title = {
-                                Text("主题设置")
+                                Text("外观设置")
                             },
                             navigationIcon = {
                                 FilledTonalIconButton(onClick = { finish() }) {
@@ -550,8 +550,8 @@ fun ColorThemeRadioItem(
 
             RadioButton(
                 selected = isSelected,
-                enabled = !monetEnabled, // 莫奈取色开启时禁用
-                onClick = null // 点击事件已在父容器处理
+                enabled = !monetEnabled,
+                onClick = null
             )
         }
     }

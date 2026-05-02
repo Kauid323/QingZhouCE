@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TopAppBarDefaults.topAppBarColors
@@ -46,12 +48,6 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
-data class ActionData(
-    var isOpenCancelTips: Boolean = false,
-    var isDisabledNotice: Boolean = false,
-    var isEnabledAutoCheckUpdate: Boolean = true
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -72,13 +68,22 @@ fun SettingsScreen(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     val prefs = context.getSharedPreferences("app_preferences", MODE_PRIVATE)
-    val actionData = ActionData()
-    actionData.isOpenCancelTips = prefs.getBoolean("exit_confirmation", false)
-    var isOpenCancelTips by remember { mutableStateOf(actionData.isOpenCancelTips) }
-    actionData.isDisabledNotice = prefs.getBoolean("disabled_community_notices", false)
-    var isDisabledNotice by remember { mutableStateOf(actionData.isDisabledNotice) }
-    actionData.isEnabledAutoCheckUpdate = prefs.getBoolean("autoCheckUpdate", true)
-    var isEnabledAutoCheckUpdate by remember { mutableStateOf(actionData.isEnabledAutoCheckUpdate) }
+    
+    var isOpenCancelTips by remember { 
+        mutableStateOf(prefs.getBoolean("exit_confirmation", false)) 
+    }
+    
+    var isDisabledNotice by remember { 
+        mutableStateOf(prefs.getBoolean("disabled_community_notices", false)) 
+    }
+    
+    var isEnabledAutoCheckUpdate by remember { 
+        mutableStateOf(prefs.getBoolean("autoCheckUpdate", true)) 
+    }
+    
+    var updateChannel by remember { 
+        mutableStateOf(prefs.getString("update_channel", "stable") ?: "stable") 
+    }
 
     LaunchedEffect(Unit) {
         lanzouAuthViewModel.refresh(context)
@@ -120,32 +125,26 @@ fun SettingsScreen(
                     title = "行为",
                     items = listOf(
                         {
-                            SettingsSwitchItem(
-                                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                                title = "返回二次确认",
-                                subtitle = "在主页面按返回键退出时二次确认",
-                                checked = isOpenCancelTips,
-                                onCheckedChange = {
-                                    actionData.isOpenCancelTips = !actionData.isOpenCancelTips
-                                    isOpenCancelTips = actionData.isOpenCancelTips
-                                    prefs.edit().apply {
-                                        putBoolean("exit_confirmation", isOpenCancelTips)
-                                        apply()
-                                    }
+                            SettingsItemCell(
+                                icon = Icons.Default.Home,
+                                title = "默认启动页",
+                                subtitle = "设置应用启动时默认显示的页面",
+                                onClick = {
+                                    val intent = Intent(context, DefaultStartPageActivity::class.java)
+                                    context.startActivity(intent)
                                 }
                             )
                         },
                         {
                             SettingsSwitchItem(
-                                icon = Icons.Default.Update,
-                                title = "自动检查更新",
-                                subtitle = "在应用启动时自动检查更新",
-                                checked = isEnabledAutoCheckUpdate,
-                                onCheckedChange = {
-                                    actionData.isEnabledAutoCheckUpdate = !actionData.isEnabledAutoCheckUpdate
-                                    isEnabledAutoCheckUpdate = actionData.isEnabledAutoCheckUpdate
+                                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                                title = "返回二次确认",
+                                subtitle = "在主页面按返回键退出时二次确认",
+                                checked = isOpenCancelTips,
+                                onCheckedChange = { checked ->
+                                    isOpenCancelTips = checked
                                     prefs.edit().apply {
-                                        putBoolean("autoCheckUpdate", isEnabledAutoCheckUpdate)
+                                        putBoolean("exit_confirmation", isOpenCancelTips)
                                         apply()
                                     }
                                 }
@@ -157,9 +156,8 @@ fun SettingsScreen(
                                 title = "禁用社区通知",
                                 subtitle = "不再显示通知按钮",
                                 checked = isDisabledNotice,
-                                onCheckedChange = {
-                                    actionData.isDisabledNotice = !actionData.isDisabledNotice
-                                    isDisabledNotice = actionData.isDisabledNotice
+                                onCheckedChange = { checked ->
+                                    isDisabledNotice = checked
                                     prefs.edit().apply {
                                         putBoolean("disabled_community_notices", isDisabledNotice)
                                         apply()
@@ -171,7 +169,6 @@ fun SettingsScreen(
                 )
             }
 
-            // 外观设置组
             item {
                 SettingsGroup(
                     title = "外观",
@@ -179,14 +176,53 @@ fun SettingsScreen(
                         {
                             SettingsItemCell(
                                 icon = Icons.Default.Draw,
-                                title = "主题设置",
-                                subtitle = "设置应用主题",
+                                title = "外观设置",
+                                subtitle = "设置应用外观",
                                 onClick = {
                                     val intent = Intent(context, ThemeActivity::class.java)
                                     context.startActivity(intent)
                                 }
                             )
                         }
+                    )
+                )
+            }
+            
+            item {
+                SettingsGroup(
+                    title = "更新",
+                    items = listOf(
+                        {
+                            SettingsSwitchItem(
+                                icon = Icons.Default.Update,
+                                title = "自动检查更新",
+                                subtitle = "在应用启动时自动检查更新",
+                                checked = isEnabledAutoCheckUpdate,
+                                onCheckedChange = { checked ->
+                                    isEnabledAutoCheckUpdate = checked
+                                    prefs.edit().apply {
+                                        putBoolean("autoCheckUpdate", isEnabledAutoCheckUpdate)
+                                        apply()
+                                    }
+                                }
+                            )
+                        },
+                        {
+                            SettingsDropdownItem(
+                                icon = Icons.AutoMirrored.Filled.List,
+                                title = "更新频道",
+                                subtitle = if (updateChannel == "stable") "仅检查正式版本" else "检查预发布版本",
+                                options = listOf("stable" to "仅正式版", "prerelease" to "正式版 + 预发布版"),
+                                selectedValue = updateChannel,
+                                onOptionSelected = { selected ->
+                                    updateChannel = selected
+                                    prefs.edit().apply {
+                                        putString("update_channel", selected)
+                                        apply()
+                                    }
+                                }
+                            )
+                        },
                     )
                 )
             }
@@ -252,7 +288,7 @@ fun SettingsScreen(
                         if (isLanzouLoggedIn) {
                             add {
                                 SettingsItemCell(
-                                    icon = Icons.Default.Logout,
+                                    icon = Icons.AutoMirrored.Filled.Logout,
                                     title = "退出蓝奏云账号",
                                     subtitle = "清除本地保存的蓝奏云登录状态",
                                     onClick = {
@@ -267,7 +303,6 @@ fun SettingsScreen(
                 )
             }
 
-            // 关于应用组
             item {
                 SettingsGroup(
                     title = "关于",
@@ -481,6 +516,82 @@ fun SettingsSwitchItem(
                             MaterialTheme.colorScheme.surfaceContainerHighest
                         }
                     )
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun SettingsDropdownItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    options: List<Pair<String, String>>,  // Pair<值, 显示文本>
+    selectedValue: String,
+    onOptionSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    SettingsCustomItem(onClick = { expanded = true }) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = "选择",
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = { expanded = false },
+        modifier = Modifier
+            .fillMaxWidth(0.9f)
+            .padding(horizontal = 16.dp)
+    ) {
+        options.forEach { (value, displayText) ->
+            DropdownMenuItem(
+                text = { Text(displayText) },
+                onClick = {
+                    onOptionSelected(value)
+                    expanded = false
+                },
+                trailingIcon = {
+                    if (selectedValue == value) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "已选中"
+                        )
+                    }
                 }
             )
         }

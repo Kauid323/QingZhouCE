@@ -7,6 +7,7 @@
     public static ** valueOf(java.lang.String);
 }
 
+-dontwarn com.google.zxing.**
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**
 -dontwarn okio.**

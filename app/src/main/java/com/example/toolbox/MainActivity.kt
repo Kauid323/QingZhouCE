@@ -40,10 +40,10 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import com.example.toolbox.utils.UpdateInfo
 import com.example.toolbox.utils.checkForUpdateWithDetails
+import com.example.toolbox.settings.UpdateDialog
+import com.example.toolbox.utils.getAppVersionInfo
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -136,9 +136,12 @@ fun MyApplicationApp() {
     LaunchedEffect(Unit) {
         val autoCheckEnabled = prefs.getBoolean("autoCheckUpdate", true)
         if (autoCheckEnabled) {
+            val updateChannel = prefs.getString("update_channel", "stable") ?: "stable"
+            val includePreRelease = updateChannel == "prerelease"
+            
             val info = checkForUpdateWithDetails(
                 context = context,
-                includePreRelease = true
+                includePreRelease = includePreRelease
             )
             if (info != null) {
                 autoUpdateInfo = info
@@ -234,25 +237,14 @@ fun MyApplicationApp() {
     }
     
     if (showAutoUpdateDialog && autoUpdateInfo != null) {
-        AlertDialog(
-            onDismissRequest = { showAutoUpdateDialog = false },
-            title = { Text("发现新版本 ${autoUpdateInfo?.version}") },
-            text = { Text("是否前往下载最新版本？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, autoUpdateInfo?.releaseUrl?.toUri())
-                        context.startActivity(intent)
-                        showAutoUpdateDialog = false
-                    }
-                ) {
-                    Text("前往下载")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAutoUpdateDialog = false }) {
-                    Text("稍后")
-                }
+        UpdateDialog(
+            updateInfo = autoUpdateInfo!!,
+            currentVersion = context.getAppVersionInfo().versionName,
+            onDismiss = { showAutoUpdateDialog = false },
+            onConfirm = {
+                val intent = Intent(Intent.ACTION_VIEW, autoUpdateInfo?.releaseUrl?.toUri())
+                context.startActivity(intent)
+                showAutoUpdateDialog = false
             }
         )
     }
@@ -408,13 +400,47 @@ fun MyApplicationApp() {
     BackHandler(enabled = drawerState.isOpen) {
         scope.launch { drawerState.close() }
     }
+    
     BackHandler(enabled = showDialog) {
         mainViewModel.changeUserDialogStatus(false)
     }
+    
     BackHandler(enabled = !showDialog && !drawerState.isOpen) {
-        if (currentRoute != AppDestinations.HOME.route && currentRoute != null) {
-            navController.popBackStack()
-        } else {
+        val currentRoute = currentDestination?.route ?: return@BackHandler
+        val defaultStartRoute = getStartDestination(context)
+    
+        val isSecondary = currentRoute == AppDestinations.CHAT.route ||
+                          currentRoute == AppDestinations.RESOURCE.route ||
+                          currentRoute == AppDestinations.PROFILE.route
+    
+        if (isSecondary) {
+            navController.navigate(AppDestinations.HOME.route) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+            return@BackHandler
+        }
+    
+        val isTopLevel = currentRoute == AppDestinations.HOME.route ||
+                         currentRoute == TopLevelDestinations.LFCommunity.route ||
+                         currentRoute == TopLevelDestinations.YHBotMaker.route
+        if (!isTopLevel) {
+            if (!navController.popBackStack()) {
+                navController.navigate(defaultStartRoute) {
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        saveState = true
+                    }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+            return@BackHandler
+        }
+    
+        if (currentRoute == defaultStartRoute) {
             val exitConfirmationEnabled = prefs.getBoolean("exit_confirmation", false)
             if (!exitConfirmationEnabled) {
                 (context as? Activity)?.finish()
@@ -426,6 +452,14 @@ fun MyApplicationApp() {
                     lastBackPressedTime = now
                     Toast.makeText(context, "再按一次退出应用", Toast.LENGTH_SHORT).show()
                 }
+            }
+        } else {
+            navController.navigate(defaultStartRoute) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
             }
         }
     }
@@ -448,7 +482,7 @@ fun MainContentNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = AppDestinations.HOME.route,
+        startDestination = getStartDestination(context),
         modifier = modifier,
         enterTransition = { fadeIn(animationSpec = tween(300)) },
         exitTransition = { fadeOut(animationSpec = tween(300)) },
@@ -456,20 +490,27 @@ fun MainContentNavHost(
         popExitTransition = { fadeOut(animationSpec = tween(300)) }
     ) {
         composable(AppDestinations.HOME.route) {
-            HomeScreen {
-                scope.launch { drawerState.open() }
-            }
+            HomeScreen(
+                onMenuClick = {
+                    scope.launch { drawerState.open() }
+                },
+                mainViewModel = mainViewModel
+            )
         }
         composable(AppDestinations.CHAT.route) {
-            MessageScreen {
-                scope.launch { drawerState.open() }
-            }
+            MessageScreen(
+                onMenuClick = {
+                    scope.launch { drawerState.open() }
+                },
+                mainViewModel = mainViewModel
+            )
         }
         composable(AppDestinations.RESOURCE.route) {
             ResourceLibScreen(
-                {
+                onMenuClick = {
                     scope.launch { drawerState.open() }
-                }
+                },
+                mainViewModel = mainViewModel
             )
         }
         composable(AppDestinations.PROFILE.route) {
@@ -502,25 +543,40 @@ interface NavDestination {
     val route: String
     val label: String
     val icon: ImageVector
+    val description: String
 }
 
 enum class TopLevelDestinations(
     override val route: String,
     override val label: String,
-    override val icon: ImageVector
+    override val icon: ImageVector,
+    override val description: String
 ) : NavDestination {
-    LFCommunity("lfcommunity", "立方论坛", Icons.Default.ChatBubbleOutline),
-    YHBotMaker("yhbotmaker", "YHBotMaker", Icons.Default.Android)
+    LFCommunity("lfcommunity", "立方论坛", Icons.Default.ChatBubbleOutline, "主要作为立方论坛客户端"),
+    YHBotMaker("yhbotmaker", "YHBotMaker", Icons.Default.Android, "主要作为云湖机器人制作器")
 }
 
 enum class AppDestinations(
     override val route: String,
     override val label: String,
     override val icon: ImageVector,
-    val iconOutlined: ImageVector
+    val iconOutlined: ImageVector,
+    override val description: String
 ) : NavDestination {
-    HOME("home", "主页", Icons.Filled.Home, Icons.Outlined.Home),
-    CHAT("chat", "会话", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
-    RESOURCE("resource", "资源库", Icons.Filled.Inbox, Icons.Outlined.Inbox),
-    PROFILE("profile", "我", Icons.Filled.Person, Icons.Outlined.Person);
+    HOME("home", "主页", Icons.Filled.Home, Icons.Outlined.Home, "主要使用轻昼实用功能"),
+    CHAT("chat", "会话", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline, ""),
+    RESOURCE("resource", "资源库", Icons.Filled.Inbox, Icons.Outlined.Inbox, ""),
+    PROFILE("profile", "我", Icons.Filled.Person, Icons.Outlined.Person, "");
+}
+
+fun getStartDestination(context: Context): String {
+    val prefs = context.getSharedPreferences("app_preferences", Context.MODE_PRIVATE)
+    val defaultStartPageName = prefs.getString("default_start_page", "主页") ?: "主页"
+    
+    return when (defaultStartPageName) {
+        "主页" -> AppDestinations.HOME.route
+        "立方论坛" -> TopLevelDestinations.LFCommunity.route
+        "YHBotMaker" -> TopLevelDestinations.YHBotMaker.route
+        else -> AppDestinations.HOME.route
+    }
 }
