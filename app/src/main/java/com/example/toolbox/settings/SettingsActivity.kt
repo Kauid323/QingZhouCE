@@ -241,35 +241,6 @@ fun SettingsScreen(
                                     context.startActivity(intent)
                                 }
                             )
-                        },
-                        {
-                            SettingsItemCell(
-                                icon = Icons.Default.Cloud,
-                                title = "蓝奏云账号登录",
-                                subtitle = if (isLanzouLoggedIn) "已登录" else "未登录",
-                                onClick = {
-                                    val intent = Intent(context, WebViewActivity::class.java).apply {
-                                        putExtra(
-                                            WebViewActivity.EXTRA_URL,
-                                            "https://pc.woozooo.com/account.php?action=login&ref=/mydisk.php"
-                                        )
-                                        putExtra(WebViewActivity.EXTRA_LANZOU_LOGIN_MODE, true)
-                                    }
-                                    lanzouLoginLauncher.launch(intent)
-                                }
-                            )
-                        },
-                        {
-                            SettingsItemCell(
-                                icon = Icons.Default.Logout,
-                                title = "退出蓝奏云账号",
-                                subtitle = "清除本地保存的蓝奏云登录状态",
-                                onClick = {
-                                    lanzouAuthViewModel.logout(context)
-                                    Toast.makeText(context, "已退出蓝奏云账号", Toast.LENGTH_SHORT).show()
-                                },
-                                isDestructive = true
-                            )
                         }
                         add {
                             SettingsItemCell(

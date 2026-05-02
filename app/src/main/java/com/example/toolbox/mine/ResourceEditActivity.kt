@@ -273,13 +273,6 @@ fun ResourceEditScreen(
             // 链接
             OutlinedTextField(value = dUrl, onValueChange = { dUrl = it }, label = { Text("资源链接") }, modifier = Modifier.fillMaxWidth())
 
-            OutlinedTextField(
-                value = packageName,
-                onValueChange = { packageName = it },
-                label = { Text("包名") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
             // 简介
             OutlinedTextField(
                 value = description,

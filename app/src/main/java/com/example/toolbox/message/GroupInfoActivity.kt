@@ -1,0 +1,475 @@
+package com.example.toolbox.message
+
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil3.compose.rememberAsyncImagePainter
+import com.example.toolbox.ApiAddress
+import com.example.toolbox.TokenManager
+import com.example.toolbox.data.GroupInfo
+import com.example.toolbox.data.GroupCreator
+import com.example.toolbox.ui.theme.ToolBoxTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class GroupInfoActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        
+        val groupId = intent.getIntExtra("group_id", -1)
+        val isJoined = intent.getBooleanExtra("is_joined", false)
+        
+        setContent {
+            ToolBoxTheme {
+                val token = TokenManager.get(this)
+                val viewModel: GroupInfoViewModel = viewModel(
+                    factory = token?.let { GroupInfoViewModelFactory(it, groupId, isJoined) }
+                )
+                GroupInfoScreen(
+                    viewModel = viewModel,
+                    onBack = { finish() }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupInfoScreen(
+    viewModel: GroupInfoViewModel,
+    onBack: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    LaunchedEffect(viewModel) {
+        viewModel.toastMessage.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.joinSuccess.collect {
+            onBack()
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text("群聊信息") },
+                navigationIcon = {
+                    FilledTonalIconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            if (uiState.isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (uiState.group != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val group = uiState.group!!
+                    
+                    // 群头像
+                    Image(
+                        painter = rememberAsyncImagePainter(
+                            if (group.avatarUrl.startsWith("http")) group.avatarUrl 
+                            else "${ApiAddress}uploads/${group.avatarUrl}"
+                        ),
+                        contentDescription = "群头像",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clip(CircleShape)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // 群名称
+                    Text(
+                        text = group.name,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // 群号
+                    Text(
+                        text = "群号: ${group.id}",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // 群信息卡片
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            // 成员数
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Group,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("成员数: ${group.membersCount}")
+                            }
+                            
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            // 创建时间
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("创建时间: ${formatGroupTime(group.createdAt)}")
+                            }
+                            
+                            if (group.isPrivate) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("私有群", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // 群简介
+                    if (group.description.isNotBlank()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    "群简介",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    group.description,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    // 创建者信息
+                    if (group.creator != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(
+                                        if (group.creator.avatarUrl.startsWith("http")) group.creator.avatarUrl
+                                        else "${ApiAddress}uploads/${group.creator.avatarUrl}"
+                                    ),
+                                    contentDescription = "创建者头像",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("群主", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(group.creator.username, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.weight(1f))
+                    
+                    // 底部按钮
+                    if (uiState.isJoined) {
+                        // 已加入 - 显示进入聊天按钮
+                        Button(
+                            onClick = onBack,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("返回")
+                        }
+                    } else {
+                        // 未加入 - 显示加入按钮
+                        Button(
+                            onClick = { viewModel.joinGroup() },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !uiState.isJoining
+                        ) {
+                            if (uiState.isJoining) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text("加入群聊")
+                            }
+                        }
+                    }
+                }
+            } else if (uiState.error != null) {
+                Text(
+                    text = "错误: ${uiState.error}",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+        }
+    }
+}
+
+fun formatGroupTime(timeStr: String): String {
+    return try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val date = sdf.parse(timeStr) ?: return timeStr
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(date)
+    } catch (_: Exception) {
+        timeStr
+    }
+}
+
+// GroupInfoViewModel
+data class GroupInfoUiState(
+    val isLoading: Boolean = true,
+    val group: GroupInfo? = null,
+    val error: String? = null,
+    val isJoined: Boolean = false,
+    val isJoining: Boolean = false
+)
+
+class GroupInfoViewModel(
+    private val token: String,
+    private val groupId: Int,
+    initialIsJoined: Boolean = false
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(GroupInfoUiState(isJoined = initialIsJoined))
+    val uiState: StateFlow<GroupInfoUiState> = _uiState.asStateFlow()
+
+    private val _toastMessage = MutableSharedFlow<String>()
+    val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
+
+    private val _joinSuccess = MutableSharedFlow<Unit>()
+    val joinSuccess: SharedFlow<Unit> = _joinSuccess.asSharedFlow()
+
+    private val client = OkHttpClient()
+
+    init {
+        loadGroupInfo()
+    }
+
+    private fun loadGroupInfo() {
+        viewModelScope.launch {
+            try {
+                val url = "${ApiAddress}group/info/$groupId"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("x-access-token", token)
+                    .get()
+                    .build()
+
+                val result = withContext(Dispatchers.IO) {
+                    val response = client.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val responseBody = response.body.string()
+                        val json = JSONObject(responseBody)
+                        if (json.optBoolean("success", false)) {
+                            val groupJson = json.getJSONObject("group")
+                            val creatorJson = groupJson.optJSONObject("creator")
+                            GroupInfo(
+                                id = groupJson.getInt("id"),
+                                name = groupJson.getString("name"),
+                                avatarUrl = groupJson.optString("avatar_url", ""),
+                                description = groupJson.optString("description", ""),
+                                isPrivate = groupJson.optBoolean("is_private", false),
+                                membersCount = groupJson.optInt("members_count", 0),
+                                status = groupJson.optInt("status", 0),
+                                createdAt = groupJson.optString("created_at", ""),
+                                creator = if (creatorJson != null) {
+                                    GroupCreator(
+                                        id = creatorJson.getInt("id"),
+                                        username = creatorJson.getString("username"),
+                                        avatarUrl = creatorJson.optString("avatar_url", "")
+                                    )
+                                } else null
+                            )
+                        } else null
+                    } else null
+                }
+
+                if (result != null) {
+                    _uiState.update { it.copy(isLoading = false, group = result, error = null) }
+                } else {
+                    _uiState.update { it.copy(isLoading = false, error = "群聊不存在") }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = e.message) }
+            }
+        }
+    }
+
+    fun joinGroup() {
+        val group = _uiState.value.group ?: return
+        
+        viewModelScope.launch {
+            _uiState.update { it.copy(isJoining = true) }
+
+            try {
+                val url = "${ApiAddress}group/join"
+                val body = """{"group_id": ${group.id}}"""
+                val request = Request.Builder()
+                    .url(url)
+                    .header("x-access-token", token)
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val result = withContext(Dispatchers.IO) {
+                    val response = client.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val responseBody = response.body.string()
+                        val json = JSONObject(responseBody)
+                        json.optBoolean("success", false)
+                    } else false
+                }
+
+                if (result) {
+                    _toastMessage.emit("加入成功")
+                    _uiState.update { it.copy(isJoining = false, isJoined = true) }
+                    _joinSuccess.emit(Unit)
+                } else {
+                    _toastMessage.emit("加入失败")
+                    _uiState.update { it.copy(isJoining = false) }
+                }
+            } catch (e: Exception) {
+                _toastMessage.emit(e.message ?: "加入失败")
+                _uiState.update { it.copy(isJoining = false) }
+            }
+        }
+    }
+}
+
+class GroupInfoViewModelFactory(
+    private val token: String,
+    private val groupId: Int,
+    private val isJoined: Boolean
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(GroupInfoViewModel::class.java)) {
+            return GroupInfoViewModel(token, groupId, isJoined) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}

@@ -261,7 +261,6 @@ fun PostArticleScreen(
                         tempFile.absolutePath
                     } else {
                         null
->>>>>>> 3265a2e8be91812342d41c182d6d9d9ed5bd29a8
                     }
                 } catch (_: Exception) {
                     null
@@ -277,11 +276,6 @@ fun PostArticleScreen(
                     java.io.File(filePath).delete()
                 } else {
                     snackbarHostState.showSnackbar("无法读取图片")
-                }
-                isLoading = false
-
-                if (uris.size > remainCount) {
-                    snackbarHostState.showSnackbar("已超出上限，仅上传前${remainCount}张")
                 }
             }
             isLoading = false
