@@ -86,6 +86,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.composed
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -319,10 +320,16 @@ private fun Modifier.adjustPinnedHeightOffsetLimit(
     scrollBehavior: TopAppBarScrollBehavior?,
     collapsedHeight: Float
 ) =
-    scrollBehavior?.state?.let {
-        onSizeChanged { size ->
-            val offsetRange = (size.height.toFloat() - collapsedHeight).coerceAtLeast(0f)
-            it.heightOffsetLimit = -offsetRange
+    scrollBehavior?.state?.let { state ->
+        composed {
+            var maxHeightPx by remember { mutableIntStateOf(0) }
+            onSizeChanged { size ->
+                if (size.height > maxHeightPx) {
+                    maxHeightPx = size.height
+                    val offsetRange = (size.height.toFloat() - collapsedHeight).coerceAtLeast(0f)
+                    state.heightOffsetLimit = -offsetRange
+                }
+            }
         }
     } ?: this
 
@@ -875,7 +882,11 @@ fun UserInfoScreen(userId: Int) {
             containerColor = Color.Transparent,
             topBar = {
                 CollapsingAvatarTopAppBar(
-                    modifier = Modifier.onSizeChanged { totalTopBarHeightPx = it.height },
+                    modifier = Modifier.onSizeChanged {
+                        if (it.height > totalTopBarHeightPx) {
+                            totalTopBarHeightPx = it.height
+                        }
+                    },
                     expandedHeight = topBarHeight,
                     avatar = {
                         userInfo?.let {
@@ -1005,7 +1016,11 @@ fun UserInfoScreen(userId: Int) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 4.dp)
-                                    .onSizeChanged { topBarHeightPx = it.height }
+                                    .onSizeChanged {
+                                        if (it.height > topBarHeightPx) {
+                                            topBarHeightPx = it.height
+                                        }
+                                    }
                             ) {
                                 Text(
                                     text = if (info.bio.isNotEmpty()) info.bio else "这个用户很懒，没有简介~",
