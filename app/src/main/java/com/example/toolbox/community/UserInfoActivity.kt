@@ -238,8 +238,8 @@ fun CollapsingAvatarTopAppBar(
         "The expandedHeight is expected to be specified and finite"
     }
 
-    require(expandedHeight > collapsedHeight) {
-        "The expandedHeight ($expandedHeight) is expected to be greater than the collapsedHeight"
+    require(expandedHeight >= 0.dp) {
+        "The expandedHeight ($expandedHeight) is expected to be non-negative"
     }
 
     val targetColor by
@@ -835,8 +835,14 @@ fun UserInfoScreen(userId: Int) {
     }
 
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topBarHeight = 200.dp
-    val totalTopHeight = statusBarHeight + topBarHeight
+    var topBarHeightPx by remember { mutableIntStateOf(0) }
+    var totalTopBarHeightPx by remember { mutableIntStateOf(0) }
+    val topBarHeight = with(density) { topBarHeightPx.toDp() }
+    val totalTopHeight = if (totalTopBarHeightPx > 0) {
+        with(density) { totalTopBarHeightPx.toDp() }
+    } else {
+        statusBarHeight + TopAppBarDefaults.TopAppBarExpandedHeight + topBarHeight
+    }
     
     val backgroundAlpha by remember {
         derivedStateOf { 1f - scrollBehavior.state.collapsedFraction }
@@ -865,8 +871,10 @@ fun UserInfoScreen(userId: Int) {
         }
         
         Scaffold(
+            containerColor = Color.Transparent,
             topBar = {
                 CollapsingAvatarTopAppBar(
+                    modifier = Modifier.onSizeChanged { totalTopBarHeightPx = it.height },
                     expandedHeight = topBarHeight,
                     avatar = {
                         userInfo?.let {
@@ -996,6 +1004,7 @@ fun UserInfoScreen(userId: Int) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 4.dp)
+                                    .onSizeChanged { topBarHeightPx = it.height }
                             ) {
                                 Text(
                                     text = if (info.bio.isNotEmpty()) info.bio else "这个用户很懒，没有简介~",
