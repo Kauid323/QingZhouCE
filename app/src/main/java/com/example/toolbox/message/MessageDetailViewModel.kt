@@ -181,7 +181,8 @@ class MessageDetailViewModel(
         if (currentState.isLoadingMore || !currentState.hasMore || currentState.messages.isEmpty()) {
             return
         }
-        val nextPage = currentState.pagination.page + 1
+        val pagination = currentState.pagination ?: return
+        val nextPage = pagination.page + 1
         loadMessages(page = nextPage, isRefresh = false)
     }
 
