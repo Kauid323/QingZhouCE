@@ -321,8 +321,8 @@ private fun Modifier.adjustPinnedHeightOffsetLimit(
 ) =
     scrollBehavior?.state?.let {
         onSizeChanged { size ->
-            val offset = size.height.toFloat() - it.heightOffset - collapsedHeight
-            it.heightOffsetLimit = -offset
+            val offsetRange = (size.height.toFloat() - collapsedHeight).coerceAtLeast(0f)
+            it.heightOffsetLimit = -offsetRange
         }
     } ?: this
 
@@ -835,7 +835,8 @@ fun UserInfoScreen(userId: Int) {
     }
 
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    var topBarHeightPx by remember { mutableIntStateOf(0) }
+    val collapsedTopBarHeightPx = with(density) { TopAppBarDefaults.TopAppBarExpandedHeight.roundToPx() }
+    var topBarHeightPx by remember { mutableIntStateOf(collapsedTopBarHeightPx) }
     var totalTopBarHeightPx by remember { mutableIntStateOf(0) }
     val topBarHeight = with(density) { topBarHeightPx.toDp() }
     val totalTopHeight = if (totalTopBarHeightPx > 0) {
