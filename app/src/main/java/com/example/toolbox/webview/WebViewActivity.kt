@@ -30,11 +30,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.WebAsset
 import androidx.compose.material3.BottomAppBar
@@ -47,6 +49,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -91,6 +95,21 @@ class WebViewActivity : ComponentActivity() {
             }
         }
     }
+    
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        
+        // 获取新的URL并加载
+        val newUrl = intent.getStringExtra(EXTRA_URL)
+        if (!newUrl.isNullOrEmpty()) {
+            // 通过广播或者其他方式通知WebView加载新URL
+            // 但由于WebView在Composable中，我们需要一个更简单的方法
+            // 直接finish并重新启动（虽然不理想，但是最可靠的方式）
+            finish()
+            startActivity(intent)
+        }
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -103,6 +122,8 @@ fun WebViewScreen(
     onLanzouLoginSuccess: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
+    
+    var isCurrentUrlBookmarked by remember { mutableStateOf(false) }
 
     // 使用数据类合并状态，减少重组
     data class WebViewUiState(
@@ -117,13 +138,15 @@ fun WebViewScreen(
     var webView: WebView? by remember { mutableStateOf(null) }
     var showMenu by remember { mutableStateOf(false) }
     var handledLanzouLogin by remember { mutableStateOf(false) }
+    
+    var showSchemeDialog by remember { mutableStateOf(false) }
+    var pendingSchemeUrl by remember { mutableStateOf("") }
+    var pendingSchemeAppName by remember { mutableStateOf("") }
 
-    // 处理物理返回键：如果 WebView 可后退则后退，否则关闭 Activity
     BackHandler(enabled = webView?.canGoBack() == true) {
         webView?.goBack()
     }
 
-    // 在 Composable 销毁时释放 WebView 资源，避免内存泄漏
     DisposableEffect(Unit) {
         onDispose {
             webView?.stopLoading()
@@ -131,6 +154,43 @@ fun WebViewScreen(
             webView?.destroy()
             webView = null
         }
+    }
+    
+    if (showSchemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showSchemeDialog = false },
+            icon = {
+                Icon(Icons.Default.OpenInNew, contentDescription = null)
+            },
+            title = { Text("跳转应用") },
+            text = {
+                Text(
+                    if (pendingSchemeAppName.isNotBlank())
+                        "即将离开浏览器打开「${pendingSchemeAppName}」\n\n$pendingSchemeUrl"
+                    else
+                        "即将离开浏览器打开：$pendingSchemeUrl"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSchemeDialog = false
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, pendingSchemeUrl.toUri())
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("允许")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSchemeDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -168,19 +228,26 @@ fun WebViewScreen(
                             onDismissRequest = { showMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("添加到书签") },
+                                text = { Text(if (isCurrentUrlBookmarked) "已添加书签" else "添加到书签") },
                                 onClick = {
                                     showMenu = false
                                     val bookmarkManager = BookmarkManager(context)
-                                    if (bookmarkManager.addBookmark(uiState.title, uiState.url)) {
-                                        Toast.makeText(context, "已添加到书签", Toast.LENGTH_SHORT).show()
+                                    if (isCurrentUrlBookmarked) {
+                                        bookmarkManager.removeBookmarkByUrl(uiState.url)
+                                        isCurrentUrlBookmarked = false
+                                        Toast.makeText(context, "已取消书签", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        Toast.makeText(context, "该书签已存在", Toast.LENGTH_SHORT).show()
+                                        if (bookmarkManager.addBookmark(uiState.title, uiState.url)) {
+                                            isCurrentUrlBookmarked = true
+                                            Toast.makeText(context, "已添加到书签", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "该书签已存在", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 },
                                 leadingIcon = {
                                     Icon(
-                                        Icons.Default.BookmarkBorder,
+                                        if (isCurrentUrlBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                                         null,
                                         Modifier.size(18.dp)
                                     )
@@ -242,7 +309,6 @@ fun WebViewScreen(
                         titleContentColor = MaterialTheme.colorScheme.onSurface
                     )
                 )
-                // 进度条：仅在 progress < 1.0f 时显示（即加载未完成）
                 if (uiState.progress < 1.0f) {
                     LinearProgressIndicator(
                         progress = { uiState.progress },
@@ -294,7 +360,8 @@ fun WebViewScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
 
-                        // WebView 基础设置
+                        var currentHistoryId: Long? = null
+
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
@@ -309,8 +376,12 @@ fun WebViewScreen(
                             }
 
                             override fun onReceivedTitle(view: WebView?, newTitle: String?) {
-                                newTitle?.let {
-                                    uiState = uiState.copy(title = it)
+                                newTitle?.let { title ->
+                                    uiState = uiState.copy(title = title)
+                                    currentHistoryId?.let { id ->
+                                        val historyManager = HistoryManager(context)
+                                        historyManager.updateHistoryTitle(id, title)
+                                    }
                                 }
                             }
                         }
@@ -319,7 +390,35 @@ fun WebViewScreen(
                             override fun shouldOverrideUrlLoading(
                                 view: WebView?,
                                 request: WebResourceRequest?
-                            ) = false // 让 WebView 自行处理
+                            ): Boolean {
+                                val url = request?.url?.toString() ?: return false
+                            
+                                if (url.startsWith("http://") || url.startsWith("https://")) {
+                                    return false
+                                }
+
+                                val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+                                val resolved = try {
+                                    context.packageManager.resolveActivity(intent, 0)
+                                } catch (_: Exception) {
+                                    null
+                                }
+
+                                if (resolved != null) {
+                                    val appName = try {
+                                        resolved.loadLabel(context.packageManager).toString()
+                                    } catch (_: Exception) {
+                                        ""
+                                    }
+                                    pendingSchemeUrl = url
+                                    pendingSchemeAppName = appName
+                                    showSchemeDialog = true
+                                } else {
+                                    Toast.makeText(context, "没有应用能打开此链接", Toast.LENGTH_SHORT).show()
+                                }
+                            
+                                return true
+                            }
 
                             override fun onPageStarted(
                                 view: WebView?,
@@ -332,17 +431,27 @@ fun WebViewScreen(
                                     canGoForward = view?.canGoForward() ?: false
                                 )
                                 val historyManager = HistoryManager(context)
-                                historyManager.addToHistory(view?.title ?: "", urlStr ?: "")
+                                val entry = historyManager.addToHistory(view?.title ?: "", urlStr ?: "")
+                                currentHistoryId = entry?.id
+                                
+                                isCurrentUrlBookmarked = BookmarkManager(context).isBookmarked(urlStr ?: "")
                             }
 
                             override fun onPageFinished(view: WebView?, urlStr: String?) {
+                                val finalTitle = view?.title ?: uiState.title
+
                                 uiState = uiState.copy(
                                     url = urlStr ?: uiState.url,
-                                    title = view?.title ?: uiState.title,
+                                    title = finalTitle,
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false,
-                                    progress = 1.0f // 确保进度条隐藏
+                                    progress = 1.0f
                                 )
+                                
+                                currentHistoryId?.let { id ->
+                                    val historyManager = HistoryManager(context)
+                                    historyManager.updateHistoryTitle(id, finalTitle)
+                                }
 
                                 if (isLanzouLoginMode && !handledLanzouLogin) {
                                     val currentUrl = urlStr.orEmpty()
@@ -356,11 +465,12 @@ fun WebViewScreen(
                                         }
                                     }
                                 }
+                                
+                                isCurrentUrlBookmarked = BookmarkManager(context).isBookmarked(urlStr ?: uiState.url)
                             }
                         }
 
                         setDownloadListener { downloadUrl, _, contentDisposition, mimetype, _ ->
-                            // 检查外部存储状态
                             if (Environment.getExternalStorageState() != Environment.MEDIA_MOUNTED) {
                                 Toast.makeText(ctx, "外部存储不可用", Toast.LENGTH_LONG).show()
                                 return@setDownloadListener
@@ -391,7 +501,6 @@ fun WebViewScreen(
                             }
                         }
 
-                        // 加载初始 URL
                         loadUrl(initialUrl)
                         webView = this
                     }

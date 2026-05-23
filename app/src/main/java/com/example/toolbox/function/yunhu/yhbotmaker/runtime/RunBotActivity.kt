@@ -2,25 +2,27 @@
 
 package com.example.toolbox.function.yunhu.yhbotmaker.runtime
 
-import android.annotation.SuppressLint
+import android.os.PowerManager
+import android.provider.Settings
+import android.net.Uri
 import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.activity.enableEdgeToEdge 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Help
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,9 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.toolbox.function.yunhu.yhbotmaker.toast
 import com.example.toolbox.ui.theme.ToolBoxTheme
 import kotlinx.coroutines.launch
@@ -39,27 +42,46 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.core.content.edit
 import com.example.toolbox.AppJson
+import com.example.toolbox.settings.SettingsGroup
+import com.example.toolbox.settings.SettingsItemCell
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.serialization.json.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import java.io.File
+
+private fun jsonObjectToMap(jsonObject: JsonObject): Map<String, Any> {
+    val result = mutableMapOf<String, Any>()
+    jsonObject.forEach { (key, element) ->
+        result[key] = jsonElementToAny(element)
+    }
+    return result
+}
+
+private fun jsonElementToAny(element: JsonElement): Any {
+    return when {
+        element is JsonObject -> jsonObjectToMap(element)
+        element is JsonArray -> element.map { jsonElementToAny(it) }
+        element.jsonPrimitive.isString -> element.jsonPrimitive.content
+        element.jsonPrimitive.booleanOrNull != null -> element.jsonPrimitive.boolean
+        element.jsonPrimitive.intOrNull != null -> element.jsonPrimitive.int
+        element.jsonPrimitive.longOrNull != null -> element.jsonPrimitive.long
+        element.jsonPrimitive.doubleOrNull != null -> element.jsonPrimitive.double
+        else -> element.toString()
+    }
+}
 
 class RunBotActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 获取传入的机器人参数
         val token = intent.getStringExtra("token") ?: ""
-        val chatId = intent.getStringExtra("id") ?: ""
-        val chatType = intent.getStringExtra("type") ?: "user"
         val botName = intent.getStringExtra("name") ?: "Bot"
         val index = intent.getIntExtra("index", 0)
 
@@ -67,8 +89,6 @@ class RunBotActivity : ComponentActivity() {
             ToolBoxTheme {
                 BotRuntimeScreen(
                     token = token,
-                    chatId = chatId,
-                    chatType = chatType,
                     botName = botName,
                     index = index,
                     onBack = { finish() }
@@ -78,26 +98,19 @@ class RunBotActivity : ComponentActivity() {
     }
 }
 
-/**
- * 消息数据类
- */
 data class ChatMessage(
     val id: Long = System.currentTimeMillis(),
-    val type: Int,          // 1=普通消息, 2=带按钮消息
+    val type: Int,  // 1=收到事件, 2=发送消息, 3=系统消息, 4=自动回复, 5=快捷命令, 6=错误
     val text: String,
     val time: String,
     val iconRes: Int? = null,
-    val iconColor: Color = Color.White,
-    val buttonText: String? = null,
-    val buttonAction: (() -> Unit)? = null
+    val iconColor: Color = Color.White
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun BotRuntimeScreen(
     token: String,
-    chatId: String,
-    chatType: String,
     botName: String,
     index: Int,
     onBack: () -> Unit
@@ -105,58 +118,87 @@ fun BotRuntimeScreen(
     val context = LocalContext.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val prefs = context.getSharedPreferences("bot_prefs", Context.MODE_PRIVATE)
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    
+    val viewModel = BotRuntimeViewModel.getInstance(index)
+    val messagesState by viewModel.messages.collectAsState()
+    
+    val isWsConnected by viewModel.isWsConnected.collectAsState()
+    val currentLoopCode by viewModel.currentLoopCode.collectAsState()
+    
+    var showRestartDialog by remember { mutableStateOf(false) }
+    var pendingConnect by remember { mutableStateOf(false) }
+    
+    var isBlackout by remember { mutableStateOf(false) }
 
-    var showQuickCommandManager by remember { mutableStateOf(false) }
+    var showFastBotDialog by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var showSendDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var showSharedDataDialog by remember { mutableStateOf(false) }
     var showBackupDialog by remember { mutableStateOf(false) }
-
-    // 示例消息数据
-    val messages = remember {
-        mutableStateListOf<ChatMessage>().apply {
-            add(
+    
+    // 电池优化弹窗
+    val batteryDialogShown = remember { mutableStateOf(prefs.getBoolean("battery_dialog_shown", false)) }
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+    val isIgnoringBattery = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    
+    if (!isIgnoringBattery && !batteryDialogShown.value) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("电池优化") },
+            text = { Text("为了让机器人在后台稳定运行，请允许忽略电池优化") },
+            confirmButton = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    TextButton(
+                        onClick = {
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        }
+                    ) {
+                        Text("去设置")
+                    }
+                    TextButton(onClick = { }) {
+                        Text("取消")
+                    }
+                    TextButton(
+                        onClick = {
+                            batteryDialogShown.value = true
+                            prefs.edit { putBoolean("battery_dialog_shown", true) }
+                        }
+                    ) {
+                        Text("不再提醒")
+                    }
+                }
+            }
+        )
+    }
+    
+    LaunchedEffect(Unit) {
+        if (messagesState.isEmpty()) {
+            viewModel.addMessage(
                 ChatMessage(
-                    type = 2,
-                    text = "点击按钮测试",
-                    time = "12:01",
-                    buttonText = "说明文档",
+                    type = 3,
+                    text = "🤖 机器人 [$botName] 已启动\n等待 WebSocket 连接...",
+                    time = timeFormat.format(Date()),
                     iconColor = Color.Cyan
                 )
             )
         }
     }
-
-    // 在 messages 定义后添加
+    
     val listState = rememberLazyListState()
 
-// 监听消息数量变化自动滚动
-    LaunchedEffect(messages.size) {
-        val lastIndex = listState.layoutInfo.totalItemsCount - 1
-        val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-        if (lastVisibleIndex == lastIndex && lastIndex >= 0) {
-            delay(100) // 等待布局稳定
-            listState.animateScrollToItem(lastIndex)
-        }
-    }
-
-    val prefs = context.getSharedPreferences("bot_prefs", Context.MODE_PRIVATE)
-
-    var requestInterval by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        requestInterval = prefs.getString("shilv$index", "2000") ?: "2000"
-    }
-
-    fun saveRequestInterval() {
-        val value = requestInterval.toIntOrNull()
-        if (value != null) {
-            prefs.edit { putString("shilv$index", value.toString()) }
-            toast(context, "已保存")
-        } else {
-            toast(context, "请输入数字")
-            // 恢复原值
-            requestInterval = prefs.getString("shilv$index", "2000") ?: "2000"
+    LaunchedEffect(messagesState.size) {
+        if (messagesState.isNotEmpty()) {
+            delay(50)
+            listState.animateScrollToItem(messagesState.size - 1)
         }
     }
 
@@ -171,27 +213,13 @@ fun BotRuntimeScreen(
         codeContent = TextFieldValue(prefs.getString(key, "") ?: "")
     }
 
-    fun saveCode(type: String) {
+    fun saveCode(type: String, code: String) {
         val key = if (type == "start") "code-start$index" else "code$index"
-        prefs.edit { putString(key, codeContent.text) }
+        prefs.edit { putString(key, code) }
+        if (type == "loop") {
+            viewModel.setCurrentLoopCode(code)
+        }
         toast(context, "已保存")
-    }
-
-    // 在 BotRuntimeScreen 组合函数内添加状态
-    var isRunning by remember { mutableStateOf(false) }
-    var pollingJob by remember { mutableStateOf<Job?>(null) }
-
-
-    // 使用 SharedPreferences 持久化存储已处理消息ID
-    val processedMsgIds = remember {
-        mutableStateOf(
-            prefs.getStringSet("processed_msgs_$index", emptySet())?.toMutableSet() ?: mutableSetOf()
-        )
-    }
-
-    // 添加保存函数
-    fun saveProcessedIds() {
-        prefs.edit { putStringSet("processed_msgs_$index", processedMsgIds.value) }
     }
 
     val symbols = listOf(
@@ -218,19 +246,16 @@ fun BotRuntimeScreen(
         ":",
         ";"
     )
-
-    // 时间格式化
-    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-
+    
+    BotSharedData.init(context, index)
+    
     val luaEngine = remember {
-        LuaEngine(
+        viewModel.luaEngine ?: LuaEngine(
             token = token,
-            chatId = chatId,
-            chatType = chatType,
             onPrint = { msg, type ->
-                messages.add(
+                viewModel.addMessage(
                     ChatMessage(
-                        type = 1,
+                        type = type,
                         text = msg,
                         time = timeFormat.format(Date()),
                         iconColor = when (type) {
@@ -244,127 +269,347 @@ fun BotRuntimeScreen(
                     )
                 )
             }
-        )
+        ).also {
+            viewModel.luaEngine = it
+        }
     }
+    
+    val onEventCallback: (JsonObject) -> Unit = lambda@{ eventJson ->
+        val eventType = eventJson["header"]?.jsonObject
+            ?.get("eventType")?.jsonPrimitive?.contentOrNull ?: "unknown"
+        
+        viewModel.addMessage(
+            ChatMessage(
+                type = 1,
+                text = "收到消息，类型为：$eventType",
+                time = timeFormat.format(Date()),
+                iconColor = Color.Cyan
+            )
+        )
+        
+        val helperKey = "chelper$index"
+        val helperJson = prefs.getString(helperKey, "") ?: ""
+        
+        // ========== 黑名单和违禁词过滤 ==========
+        if (eventType == "message.receive.normal") {
+            val eventObj = eventJson["event"]?.jsonObject
+            val messageObj = eventObj?.get("message")?.jsonObject
+            val contentObj = messageObj?.get("content")?.jsonObject
+            val text = contentObj?.get("text")?.jsonPrimitive?.content ?: ""
+            val senderObj = eventObj?.get("sender")?.jsonObject
+            val senderId = senderObj?.get("senderId")?.jsonPrimitive?.content ?: ""
+            val chatObj = eventObj?.get("chat")?.jsonObject
+            val chatType = chatObj?.get("chatType")?.jsonPrimitive?.content ?: ""
+            val msgId = messageObj?.get("msgId")?.jsonPrimitive?.content ?: ""
+            val chatId = chatObj?.get("chatId")?.jsonPrimitive?.content ?: ""
 
-    @SuppressLint("UseKtx")
-    fun startPolling() {
-        if (isRunning) return
-        isRunning = true
-        prefs.edit { putBoolean("stop_${index + 1}", false) }
-
-        pollingJob = scope.launch(Dispatchers.IO) {
-            val interval = requestInterval.toIntOrNull() ?: 2000
-            val client = OkHttpClient()
-
-            val startupCode = prefs.getString("code-start$index", "") ?: ""
-            withContext(Dispatchers.Main) {
-                luaEngine.runStartupCode(startupCode)
-            }
-
-            while (isRunning) {
-                // 检查是否被外部停止
-                if (prefs.getBoolean("stop_${index + 1}", false)) {
-                    withContext(Dispatchers.Main) { isRunning = false }
-                    break
-                }
-
-                // 每次循环都从 prefs 读取最新的循环代码
-                val currentLoopCode = prefs.getString("code$index", "") ?: ""
-
+            if (helperJson.isNotBlank()) {
                 try {
-                    val url = "https://chat-go.jwzhd.com/open-apis/v1/bot/messages?token=$token&chat-id=$chatId&chat-type=$chatType&before=10"
-                    val request = Request.Builder().url(url).build()
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val body = response.body.string()
-                            val json = try {
-                                AppJson.json.parseToJsonElement(body).jsonObject
-                            } catch (_: Exception) {
-                                return@launch
-                            }
-
-                            if (json["code"]?.jsonPrimitive?.double == 1.0) {
-                                val data = json["data"]?.jsonObject
-                                val list = data?.get("list")?.jsonArray?.map { it.jsonObject } ?: emptyList()
-                                val recentMsgs = list.take(5)
-                                for (msg in recentMsgs.reversed()) {
-                                    val msgId = msg["msgId"]?.jsonPrimitive?.contentOrNull ?: continue
-                                    if (processedMsgIds.value.contains(msgId)) continue
-
-                                    processedMsgIds.value.add(msgId)
-                                    saveProcessedIds()
-
-                                    withContext(Dispatchers.Main) {
-                                        luaEngine.runLoopCode(currentLoopCode, msg)
-                                    }
+                    val commandData = AppJson.json.decodeFromString<CommandData>(helperJson)
+                    
+                    if (chatType == "group") {
+                        val isBlocked = commandData.blockedUsers.any { it.userId == senderId }
+                        if (isBlocked) {
+                            val api = YunHuApiService(token)
+                            api.recallMessage(
+                                chatId = chatId,
+                                chatType = chatType,
+                                msgId = msgId,
+                                onSuccess = { _, _ ->
+                                    viewModel.addMessage(
+                                        ChatMessage(
+                                            type = 2,
+                                            text = "已撤回黑名单用户发言: $senderId",
+                                            time = timeFormat.format(Date()),
+                                            iconColor = Color.Red
+                                        )
+                                    )
+                                },
+                                onError = { err ->
+                                    viewModel.addMessage(
+                                        ChatMessage(
+                                            type = 4,
+                                            text = "撤回失败: $err",
+                                            time = timeFormat.format(Date()),
+                                            iconColor = Color.Red
+                                        )
+                                    )
+                                }
+                            )
+                            return@lambda
+                        }
+                    }
+                    
+                    for (bannedWord in commandData.bannedWords) {
+                        if (text.contains(bannedWord.word)) {
+                            when (bannedWord.action) {
+                                "delete" -> {
+                                    val api = YunHuApiService(token)
+                                    api.recallMessage(
+                                        chatId = if (chatType == "group") chatId else senderId,
+                                        chatType = chatType,
+                                        msgId = msgId,
+                                        onSuccess = { _, _ ->
+                                            viewModel.addMessage(
+                                                ChatMessage(
+                                                    type = 2,
+                                                    text = "已撤回包含违禁词「${bannedWord.word}」的消息",
+                                                    time = timeFormat.format(Date()),
+                                                    iconColor = Color.Red
+                                                )
+                                            )
+                                        },
+                                        onError = { err ->
+                                            viewModel.addMessage(
+                                                ChatMessage(
+                                                    type = 4,
+                                                    text = "撤回失败: $err",
+                                                    time = timeFormat.format(Date()),
+                                                    iconColor = Color.Red
+                                                )
+                                            )
+                                        }
+                                    )
+                                    return@lambda
+                                }
+                                "warn" -> {
+                                    val api = YunHuApiService(token)
+                                    val recvId = if (chatType == "group") chatId else senderId
+                                    api.sendMessage(
+                                        recvId = recvId,
+                                        recvType = chatType,
+                                        contentType = "text",
+                                        content = "⚠️ 您的消息包含违禁词「${bannedWord.word}」，请注意言行",
+                                        onSuccess = { _, _ ->
+                                            viewModel.addMessage(
+                                                ChatMessage(
+                                                    type = 2,
+                                                    text = "已警告发送包含违禁词「${bannedWord.word}」消息的用户",
+                                                    time = timeFormat.format(Date()),
+                                                    iconColor = Color.Yellow
+                                                )
+                                            )
+                                        },
+                                        onError = { err ->
+                                            viewModel.addMessage(
+                                                ChatMessage(
+                                                    type = 4,
+                                                    text = "发送警告失败: $err",
+                                                    time = timeFormat.format(Date()),
+                                                    iconColor = Color.Red
+                                                )
+                                            )
+                                        }
+                                    )
+                                    return@lambda
                                 }
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        messages.add(
-                            ChatMessage(
-                                type = 1,
-                                text = "轮询错误: ${e.message}",
-                                time = timeFormat.format(Date()),
-                                iconColor = Color.Red
+                } catch (_: Exception) {
+                    // 解析失败，忽略
+                }
+            }
+        }
+        // ========== 黑名单和违禁词过滤结束 ==========
+        
+        // ========== 自动回复和快捷命令处理 ==========
+        if (helperJson.isNotBlank()) {
+            try {
+                val commandData = AppJson.json.decodeFromString<CommandData>(helperJson)
+                
+                if (eventType == "message.receive.normal") {
+                    val eventObj = eventJson["event"]?.jsonObject
+                    val messageObj = eventObj?.get("message")?.jsonObject
+                    val contentObj = messageObj?.get("content")?.jsonObject
+                    val text = contentObj?.get("text")?.jsonPrimitive?.content ?: ""
+                    val senderObj = eventObj?.get("sender")?.jsonObject
+                    val senderId = senderObj?.get("senderId")?.jsonPrimitive?.content ?: ""
+                    val chatObj = eventObj?.get("chat")?.jsonObject
+                    val chatType = chatObj?.get("chatType")?.jsonPrimitive?.content ?: ""
+                    val chatId = chatObj?.get("chatId")?.jsonPrimitive?.content ?: ""
+                    
+                    for (autoReply in commandData.autoReplies) {
+                        if (text.contains(autoReply.key)) {
+                            val api = YunHuApiService(token)
+                            
+                            // 根据聊天类型决定回复给谁
+                            val (recvId, recvType) = when (chatType) {
+                                "group" -> Pair(chatId, "group")      // 群聊：回复到群
+                                "bot" -> Pair(senderId, "user")       // 私聊：回复给用户
+                                else -> Pair(senderId, "user")
+                            }
+                            
+                            api.sendMessage(
+                                recvId = recvId,
+                                recvType = recvType,
+                                contentType = autoReply.type,
+                                content = autoReply.reply,
+                                onSuccess = { _, _ ->
+                                    viewModel.addMessage(
+                                        ChatMessage(
+                                            type = 2,
+                                            text = "自动回复成功: ${autoReply.reply}",
+                                            time = timeFormat.format(Date()),
+                                            iconColor = Color.Green
+                                        )
+                                    )
+                                },
+                                onError = { err ->
+                                    viewModel.addMessage(
+                                        ChatMessage(
+                                            type = 4,
+                                            text = "自动回复失败: $err",
+                                            time = timeFormat.format(Date()),
+                                            iconColor = Color.Red
+                                        )
+                                    )
+                                }
                             )
-                        )
+                            break
+                        }
                     }
                 }
-                delay(interval.toLong())
+                
+                // 处理指令消息（快捷命令）
+                if (eventType == "message.receive.instruction") {
+                    val eventObj = eventJson["event"]?.jsonObject
+                    val messageObj = eventObj?.get("message")?.jsonObject
+                    val commandId = messageObj?.get("commandId")?.jsonPrimitive?.intOrNull ?: 0
+                    
+                    for (quickCmd in commandData.quickCommands) {
+                        if (quickCmd.id == commandId) {
+                            // 执行快捷命令的 Lua 代码
+                            try {
+                                val eventMap = jsonObjectToMap(eventJson)
+                                luaEngine.runEventCode(quickCmd.code, eventMap)
+                                viewModel.addMessage(
+                                    ChatMessage(
+                                        type = 2,
+                                        text = "执行快捷命令成功: $commandId",
+                                        time = timeFormat.format(Date()),
+                                        iconColor = Color.Cyan
+                                    )
+                                )
+                            } catch (e: Exception) {
+                                viewModel.addMessage(
+                                    ChatMessage(
+                                        type = 4,
+                                        text = "快捷命令执行失败: ${e.message}",
+                                        time = timeFormat.format(Date()),
+                                        iconColor = Color.Red
+                                    )
+                                )
+                            }
+                            break
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // 解析失败，忽略
+            }
+        }
+        // ========== 自动回复和快捷命令处理结束 ==========
+        
+        if (currentLoopCode.isNotBlank()) {
+            val eventMap = jsonObjectToMap(eventJson)
+            luaEngine.runEventCode(currentLoopCode, eventMap)
+        }
+    }
+    
+    val onStatusChangedCallback: (Boolean) -> Unit = { connected ->
+        viewModel.setWsConnected(connected)
+        prefs.edit { putBoolean("stop_${index + 1}", !connected) }
+    
+        if (connected) {
+            viewModel.addMessage(
+                ChatMessage(
+                    type = 3,
+                    text = "WebSocket 已连接",
+                    time = timeFormat.format(Date()),
+                    iconColor = Color.Green
+                )
+            )
+        }
+    }
+    
+    val onErrorCallback: (String) -> Unit = { error ->
+        viewModel.addMessage(
+            ChatMessage(
+                type = 4,
+                text = "WebSocket 错误: $error",
+                time = timeFormat.format(Date()),
+                iconColor = Color.Red
+            )
+        )
+    }
+    
+    LaunchedEffect(Unit) {
+        val savedCode = prefs.getString("code$index", "") ?: ""
+        if (viewModel.currentLoopCode.value.isEmpty() && savedCode.isNotEmpty()) {
+            viewModel.setCurrentLoopCode(savedCode)
+        }
+        BotWebSocketManagerSingleton.getInstance(
+            botIndex = index,
+            token = token,
+            onEvent = onEventCallback,
+            onStatusChanged = onStatusChangedCallback,
+            onError = onErrorCallback
+        )
+    }
+    
+    val startupExecuted by viewModel.startupExecuted.collectAsState()
+
+    LaunchedEffect(isWsConnected) {
+        if (isWsConnected && !startupExecuted) {
+            viewModel.setStartupExecuted(true)
+            val startupCode = prefs.getString("code-start$index", "") ?: ""
+            if (startupCode.isNotBlank()) {
+                viewModel.addMessage(
+                    ChatMessage(
+                        type = 3,
+                        text = "📝 正在执行初始化代码...",
+                        time = timeFormat.format(Date()),
+                        iconColor = Color.Yellow
+                    )
+                )
+                luaEngine.runStartupCode(startupCode)
             }
         }
     }
 
-    fun stopPolling() {
-        isRunning = false
-        pollingJob?.cancel()
-        pollingJob = null
-        prefs.edit { putBoolean("stop_${index + 1}", true) }
-        messages.add(
-            ChatMessage(
-                type = 1,
-                text = "机器人已停止",
-                time = timeFormat.format(Date()),
-                iconColor = Color.Yellow
-            )
-        )
-    }
-
-// 在界面退出时停止轮询
     BackHandler {
-        stopPolling()
         onBack()
     }
 
-    fun performSend(content: String, contentType: String) {
+    fun performSend(recvId: String, recvType: String, content: String, contentType: String) {
         val tempId = System.currentTimeMillis()
-        messages.add(
+        viewModel.addMessage(
             ChatMessage(
                 id = tempId,
-                type = 1,
-                text = "发送中: $content",
+                type = 3,
+                text = "发送中 → $recvId ($recvType): $content",
                 time = timeFormat.format(Date()),
                 iconColor = Color.Gray
             )
         )
-
+    
         val api = YunHuApiService(token)
         api.sendMessage(
-            recvId = chatId,
-            recvType = chatType,
+            recvId = recvId,
+            recvType = recvType,
             contentType = contentType,
             content = content,
             onSuccess = { _, _ ->
                 scope.launch(Dispatchers.Main) {
-                    messages.removeAll { it.id == tempId }
-                    messages.add(
+                    val newMessages = viewModel.messages.value.filter { it.id != tempId }
+                    viewModel.clearMessages()
+                    newMessages.forEach { viewModel.addMessage(it) }
+                    
+                    viewModel.addMessage(
                         ChatMessage(
-                            type = 1,
-                            text = content,
+                            type = 2,
+                            text = "成功向 $recvId 发送: $content",
                             time = timeFormat.format(Date()),
                             iconColor = Color.Green
                         )
@@ -374,10 +619,13 @@ fun BotRuntimeScreen(
             },
             onError = { errorMsg ->
                 scope.launch(Dispatchers.Main) {
-                    messages.removeAll { it.id == tempId }
-                    messages.add(
+                    val newMessages = viewModel.messages.value.filter { it.id != tempId }
+                    viewModel.clearMessages()
+                    newMessages.forEach { viewModel.addMessage(it) }
+                    
+                    viewModel.addMessage(
                         ChatMessage(
-                            type = 1,
+                            type = 4,
                             text = "发送失败: $errorMsg",
                             time = timeFormat.format(Date()),
                             iconColor = Color.Red
@@ -388,43 +636,65 @@ fun BotRuntimeScreen(
             }
         )
     }
+    
+    if (showSharedDataDialog) {
+        SharedDataDialog(
+            botIndex = index,
+            onDismiss = { showSharedDataDialog = false }
+        )
+    }
 
-    // 发送对话框
     if (showSendDialog) {
         SendMessageDialog(
             onDismiss = { showSendDialog = false },
-            onSend = { content, contentType ->
-                performSend(content, contentType)
+            onSend = { recvId, recvType, content, contentType ->
+                performSend(recvId, recvType, content, contentType)
             }
         )
     }
 
-    // 代码类型选择对话框
     if (showCodeTypeSelector) {
         AlertDialog(
             onDismissRequest = { showCodeTypeSelector = false },
-            title = { Text("选择要编辑的代码") },
+            icon = {
+                Icon(Icons.Default.Edit, contentDescription = null)
+            },
+            title = { Text("编辑代码") },
             text = {
-                Column {
-                    TextButton(
-                        onClick = {
-                            currentCodeType = "start"
-                            loadCode("start")
-                            showCodeTypeSelector = false
-                            showCodeEditor = true
-                        }
-                    ) {
-                        Text("功能代码 (启动前运行)")
-                    }
-                    TextButton(
-                        onClick = {
-                            currentCodeType = "loop"
-                            loadCode("loop")
-                            showCodeTypeSelector = false
-                            showCodeEditor = true
-                        }
-                    ) {
-                        Text("循环监听代码")
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        SettingsGroup(
+                            items = listOf(
+                                {
+                                    SettingsItemCell(
+                                        icon = Icons.Default.Chat,
+                                        title = "初始化代码",
+                                        subtitle = "启动机器人时运行的代码",
+                                        onClick = {
+                                            currentCodeType = "start"
+                                            loadCode("start")
+                                            showCodeTypeSelector = false
+                                            showCodeEditor = true
+                                        }
+                                    )
+                                },
+                                {
+                                    SettingsItemCell(
+                                        icon = Icons.Default.Code,
+                                        title = "事件代码",
+                                        subtitle = "收到事件运行的代码",
+                                        onClick = {
+                                            currentCodeType = "loop"
+                                            loadCode("loop")
+                                            showCodeTypeSelector = false
+                                            showCodeEditor = true
+                                        }
+                                    )
+                                }
+                            )
+                        )
                     }
                 }
             },
@@ -437,9 +707,15 @@ fun BotRuntimeScreen(
     }
 
     if (showCodeEditor) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val sheetState = rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = { newValue ->
+                newValue != SheetValue.Hidden
+            }
+        )
         ModalBottomSheet(
-            onDismissRequest = { showCodeEditor = false },
+            onDismissRequest = { },
+            dragHandle = { },
             sheetState = sheetState,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -448,33 +724,48 @@ fun BotRuntimeScreen(
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
-                // 标题
-                Text(
-                    text = if (currentCodeType == "start") "编辑功能代码" else "编辑循环监听代码",
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { showCodeEditor = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (currentCodeType == "start") "编辑初始化代码" else "编辑事件处理代码",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = {
+                            saveCode(currentCodeType, codeContent.text)
+                            showCodeEditor = false
+                    }) {
+                        Icon(Icons.Default.Check, contentDescription = "保存")
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // 可滚动的编辑器区域
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                        .fillMaxSize()
                 ) {
-                    // 编辑器主体
                     OutlinedTextField(
                         value = codeContent,
                         onValueChange = { codeContent = it },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 200.dp)
+                            .weight(1f)
                             .padding(bottom = 8.dp),
-                        maxLines = 20,
-                        label = { Text("Lua 代码") }
+                        label = { Text("Lua 代码") },
+                        maxLines = Int.MAX_VALUE,
+                        textStyle = LocalTextStyle.current.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
                     )
 
-                    // 快捷符号栏 - 横向滑动单行
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier
@@ -482,7 +773,7 @@ fun BotRuntimeScreen(
                             .padding(bottom = 16.dp)
                     ) {
                         items(symbols) { symbol ->
-                            Button(
+                            FilledTonalButton(
                                 onClick = {
                                     codeContent = codeContent.copy(
                                         text = codeContent.text + symbol
@@ -496,43 +787,21 @@ fun BotRuntimeScreen(
                         }
                     }
                 }
-
-                // 底部按钮（固定在底部）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(
-                        onClick = { showCodeEditor = false }
-                    ) {
-                        Text("取消")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            saveCode(currentCodeType)
-                            showCodeEditor = false
-                        }
-                    ) {
-                        Text("保存")
-                    }
-                }
             }
         }
     }
 
-    if (showQuickCommandManager) {
-        QuickCommandManagerDialog(
+    if (showFastBotDialog) {
+        FastBotDialog(
             botIndex = index,
-            onDismiss = { showQuickCommandManager = false }
+            onDismiss = { showFastBotDialog = false }
         )
     }
 
     if (showImportDialog) {
         ImportDialog(
             botIndex = index,
+            botName = botName,
             onDismiss = { showImportDialog = false }
         )
     }
@@ -550,6 +819,45 @@ fun BotRuntimeScreen(
             onDismiss = { showHelpDialog = false }
         )
     }
+    
+    if (showRestartDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestartDialog = false },
+            icon = {
+                Icon(Icons.Default.Info, contentDescription = null)
+            },
+            title = { Text("初始化代码已修改") },
+            text = { Text("检测到初始化代码已变更，是否重新运行初始化代码？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRestartDialog = false
+                        viewModel.setStartupExecuted(false)
+                        BotWebSocketManagerSingleton.connect(index)
+                    }
+                ) {
+                    Text("重新运行")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showRestartDialog = false
+                        BotWebSocketManagerSingleton.connect(index)
+                    }
+                ) {
+                    Text("直接连接")
+                }
+            }
+        )
+    }
+    
+    fun getAvatarBitmap(): Bitmap? {
+        val avatarPath = prefs.getString("avatar_$index", null)
+        return avatarPath?.takeIf { File(it).exists() }?.let { BitmapFactory.decodeFile(it) }
+    }
+    
+    var avatarBitmap by remember { mutableStateOf(getAvatarBitmap()) }
 
     val configuration = LocalConfiguration.current
     val drawerWidth = (configuration.screenWidthDp * 0.75f).dp
@@ -565,64 +873,56 @@ fun BotRuntimeScreen(
                         .verticalScroll(rememberScrollState())
                         .padding(bottom = 16.dp)
                 ) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(100.dp)
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        contentAlignment = Alignment.CenterStart
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
                         Text(
                             "YHBot 控制台",
                             style = MaterialTheme.typography.headlineSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            if (isWsConnected) "● WebSocket 已连接" else "○ WebSocket 未连接",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isWsConnected) Color.Green else MaterialTheme.colorScheme.error
+                        )
                     }
+
                     HorizontalDivider()
 
-                    // 循环间隔设置卡片
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp)
-                        ) {
+                    NavigationDrawerItem(
+                        label = { 
                             Text(
-                                text = "请求间隔 (ms/次)",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = requestInterval,
-                                    onValueChange = { requestInterval = it },
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    shape = MaterialTheme.shapes.small,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Button(
-                                    onClick = { saveRequestInterval() },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                                ) {
-                                    Text("保存")
+                                if (isWsConnected) "断开连接" else "连接",
+                                color = if (isWsConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            ) 
+                        },
+                        selected = false,
+                        onClick = {
+                            if (isWsConnected) {
+                                BotWebSocketManagerSingleton.disconnect(index)
+                            } else {
+                                val currentStartupCode = prefs.getString("code-start$index", "") ?: ""
+                                
+                                if (startupExecuted && luaEngine.startupCodeExecuted != currentStartupCode) {
+                                    showRestartDialog = true
+                                } else {
+                                    BotWebSocketManagerSingleton.connect(index)
                                 }
                             }
-                        }
-                    }
-
-                    // 菜单项列表
+                        },
+                        icon = { 
+                            Icon(
+                                if (isWsConnected) Icons.Default.Close else Icons.Default.Sync, 
+                                null,
+                                tint = if (isWsConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            ) 
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
                     NavigationDrawerItem(
                         label = { Text("编辑代码") },
                         selected = false,
@@ -631,10 +931,17 @@ fun BotRuntimeScreen(
                         modifier = Modifier.padding(horizontal = 8.dp)
                     )
                     NavigationDrawerItem(
-                        label = { Text("快捷指令") },
+                        label = { Text("FastBot") },
                         selected = false,
-                        onClick = { showQuickCommandManager = true },
+                        onClick = { showFastBotDialog = true },
                         icon = { Icon(Icons.Default.Bolt, null) },
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("SharedData") },
+                        selected = false,
+                        onClick = { showSharedDataDialog = true },
+                        icon = { Icon(Icons.Default.Storage, null) },
                         modifier = Modifier.padding(horizontal = 8.dp)
                     )
                     NavigationDrawerItem(
@@ -665,7 +972,37 @@ fun BotRuntimeScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("YHBot - $botName") },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (avatarBitmap != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = avatarBitmap!!.asImageBitmap(),
+                                    contentDescription = "头像",
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Person,
+                                    contentDescription = "默认头像",
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                            Column {
+                                Text("YHBot - $botName")
+                                Text(
+                                    text = if (isWsConnected) "● 在线" else "○ 离线",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isWsConnected) Color.Green else MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -678,22 +1015,26 @@ fun BotRuntimeScreen(
                     }
                 )
             },
-            floatingActionButton = {
-                FloatingActionButton(
-                    onClick = {
-                        if (isRunning) {
-                            stopPolling()
+            bottomBar = {
+                BottomActionBar(
+                    onSendClick = { showSendDialog = true },
+                    onClearClick = { viewModel.clearMessages() },
+                    onFullscreenClick = { isBlackout = true },
+                    onConnectClick = {
+                        if (isWsConnected) {
+                            BotWebSocketManagerSingleton.disconnect(index)
                         } else {
-                            startPolling()
+                            val currentStartupCode = prefs.getString("code-start$index", "") ?: ""
+                            
+                            if (startupExecuted && luaEngine.startupCodeExecuted != currentStartupCode) {
+                                showRestartDialog = true
+                            } else {
+                                BotWebSocketManagerSingleton.connect(index)
+                            }
                         }
                     },
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(
-                        if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        contentDescription = if (isRunning) "停止" else "启动"
-                    )
-                }
+                    isWsConnected = isWsConnected
+                )
             }
         ) { innerPadding ->
             Column(
@@ -701,28 +1042,38 @@ fun BotRuntimeScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                // 消息列表
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(messages) { msg ->
-                        when (msg.type) {
-                            1 -> MessageItem(msg)
-                            2 -> MessageItemWithButton(msg)
-                        }
+                    items(messagesState) { msg ->
+                        MessageItem(msg)
                     }
                 }
-
-                // 底部操作栏
-                BottomActionBar(
-                    onSendClick = { showSendDialog = true },
-                    onClearClick = {
-                        messages.clear()
-                    }
-                )
+            }
+        }
+        
+        if (isBlackout) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .zIndex(100f),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(
+                    onClick = { isBlackout = false },
+                    modifier = Modifier.size(120.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lightbulb,
+                        contentDescription = "关闭黑屏",
+                        tint = Color.White.copy(alpha = 0.2f),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -730,6 +1081,14 @@ fun BotRuntimeScreen(
 
 @Composable
 fun MessageItem(message: ChatMessage) {
+    val (icon, iconTint) = when (message.type) {
+        1 -> Icons.AutoMirrored.Filled.CallReceived to Color.Cyan           // 收到消息
+        2 -> Icons.Default.Check to Color.Green                       // 操作成功
+        3 -> Icons.Default.Info to Color.White                              // 系统消息
+        4 -> Icons.Default.Close to Color.Red                               // 报错
+        else -> Icons.Default.Android to MaterialTheme.colorScheme.primary  // 其他
+    }
+    
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -739,56 +1098,20 @@ fun MessageItem(message: ChatMessage) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = Icons.Default.Android,
+                imageVector = icon,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = iconTint
             )
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = message.text, style = MaterialTheme.typography.bodyMedium)
                 Text(
                     text = message.time,
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun MessageItemWithButton(message: ChatMessage) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = message.text, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            if (message.buttonText != null) {
-                Button(
-                    onClick = { message.buttonAction?.invoke() ?: Unit },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text(message.buttonText)
-                }
-            }
-            Text(
-                text = message.time,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.align(Alignment.End)
-            )
         }
     }
 }
@@ -796,33 +1119,39 @@ fun MessageItemWithButton(message: ChatMessage) {
 @Composable
 fun BottomActionBar(
     onSendClick: () -> Unit,
-    onClearClick: () -> Unit
+    onClearClick: () -> Unit,
+    onFullscreenClick: () -> Unit,
+    onConnectClick: () -> Unit,
+    isWsConnected: Boolean
 ) {
-    Card(
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(0.3f),
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(8.dp)
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .navigationBarsPadding(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { /* 打开设置 */ }) {
-                Icon(Icons.Default.Settings, contentDescription = "设置")
-            }
             IconButton(onClick = onSendClick) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
             }
-            IconButton(onClick = { /* 切换全屏模式 */ }) {
-                Icon(Icons.Default.Fullscreen, contentDescription = "全屏")
+            IconButton(onClick = onFullscreenClick) {
+                Icon(Icons.Default.Lightbulb, contentDescription = "黑屏模式")
             }
             IconButton(onClick = onClearClick) {
                 Icon(Icons.Default.Delete, "清空日志")
             }
-            IconButton(onClick = {  }) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "开始")
+            IconButton(onClick = onConnectClick) {
+                Icon(
+                    if (isWsConnected) Icons.Default.Close else Icons.Default.Sync,
+                    contentDescription = if (isWsConnected) "断开" else "连接",
+                    tint = if (isWsConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

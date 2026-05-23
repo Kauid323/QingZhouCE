@@ -15,7 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -41,6 +40,17 @@ class MessageDetailViewModel(
 
     private val _editDialog = MutableStateFlow(EditDialogState())
     val editDialog: StateFlow<EditDialogState> = _editDialog.asStateFlow()
+    
+    private val _replyTo = MutableStateFlow<Message?>(null)
+    val replyTo: StateFlow<Message?> = _replyTo.asStateFlow()
+    
+    fun setReplyTo(message: Message?) {
+        _replyTo.value = message
+    }
+    
+    fun clearReplyTo() {
+        _replyTo.value = null
+    }
 
     private val client = OkHttpClient()
     private val json = AppJson.json
@@ -52,8 +62,7 @@ class MessageDetailViewModel(
         }
     }
 
-    // 加载聊天记录
-    fun loadMessages(page: Int, isRefresh: Boolean, beforeMsgId: String? = null) {
+    fun loadMessages(page: Int, isRefresh: Boolean) {
         viewModelScope.launch {
             _uiState.update {
                 if (isRefresh) it.copy(isRefreshing = true, error = null)
@@ -67,9 +76,6 @@ class MessageDetailViewModel(
                     put("chat_id", chatId)
                     put("page", page)
                     put("per_page", 20)
-                    if (beforeMsgId != null) {
-                        put("before_msg_id", beforeMsgId)
-                    }
                 }
                 
                 val body = requestObj.toString().toRequestBody("application/json".toMediaType())
@@ -84,7 +90,7 @@ class MessageDetailViewModel(
                     try {
                         val response = client.newCall(request).execute()
                         if (response.isSuccessful) {
-                            val responseBody = response.body?.string() ?: ""
+                            val responseBody = response.body.string()
                             json.decodeFromString<GetMessagesResponse>(responseBody)
                         } else {
                             null
@@ -96,20 +102,25 @@ class MessageDetailViewModel(
                 }
 
                 if (result != null && result.status.code == 0) {
+                    val hasMore = result.pagination?.let { it.page < it.pages } ?: false
+                    
                     _uiState.update { current ->
                         // reverseLayout = false: 消息按时间正序排列（旧消息在前，新消息在后）
                         val newMessages = if (isRefresh) {
-                            // 刷新时，API返回的消息需要按时间正序排列
-                            result.messages.sortedBy { it.sendTime }
+                            result.messages.sortedByDescending { it.sendTime }
                         } else {
-                            // 加载更多时，旧消息插入到前面
-                            result.messages.sortedBy { it.sendTime } + current.messages
+                            (current.messages + result.messages.sortedByDescending { it.sendTime })
+                                .distinctBy { it.msgId }
                         }
                         current.copy(
                             messages = newMessages,
                             canSend = result.canSend,
                             pagination = result.pagination,
-                            hasMore = result.pagination?.let { it.page < it.pages } ?: false,
+                            hasMore = hasMore,
+                            otherUser = result.otherUser,
+                            relationship = result.relationship,
+                            isChatExpired = result.tempChatExpired,
+                            isAdmin = result.isAdmin,
                             isRefreshing = false,
                             isLoadingMore = false,
                             error = null
@@ -146,12 +157,12 @@ class MessageDetailViewModel(
 
                 val result = withContext(Dispatchers.IO) {
                     val response = client.newCall(request).execute()
-                    val responseBody = response.body?.string()
-                    if (response.isSuccessful && responseBody != null) {
+                    val responseBody = response.body.string()
+                    if (response.isSuccessful) {
                         try {
                             val parsed = json.decodeFromString<GroupDetailResponse>(responseBody)
                             if (parsed.success) parsed.group else null
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             null
                         }
                     } else null
@@ -160,8 +171,7 @@ class MessageDetailViewModel(
                 if (result != null) {
                     _uiState.update { it.copy(groupInfo = result) }
                 }
-            } catch (e: Exception) {
-                // Silently fail for group info loading
+            } catch (_: Exception) {
             }
         }
     }
@@ -171,50 +181,50 @@ class MessageDetailViewModel(
         if (currentState.isLoadingMore || !currentState.hasMore || currentState.messages.isEmpty()) {
             return
         }
-        // Use the oldest message's ID as before_msg_id for pagination
-        val oldestMsgId = currentState.messages.firstOrNull()?.id
-        if (oldestMsgId != null) {
-            loadMessages(page = 1, isRefresh = false, beforeMsgId = oldestMsgId.toString())
-        }
+        val nextPage = currentState.pagination.page + 1
+        loadMessages(page = nextPage, isRefresh = false)
     }
 
     fun sendMessage() {
         val state = _uiState.value
         if (state.inputText.isBlank() && state.selectedImages.isEmpty()) {
-            viewModelScope.launch {
-                _toastMessage.emit("请输入内容或选择图片")
-            }
+            viewModelScope.launch { _toastMessage.emit("请输入内容或选择图片") }
             return
         }
-
+    
         viewModelScope.launch {
             try {
                 val url = "${ApiAddress}chat/send"
+    
                 val requestData = SendMessageRequest(
                     chatType = chatType,
                     chatId = chatId,
-                    data = MessageData(text = state.inputText),
-                    quoteMsgId = null
+                    data = MessageData(
+                        text = state.inputText,
+                        images = state.selectedImages,
+                        isMarkdown = state.isMarkdown
+                    ),
+                    quoteMsgId = _replyTo.value?.msgId
                 )
                 val bodyJson = json.encodeToString(requestData)
                 val body = bodyJson.toRequestBody("application/json".toMediaType())
-
+    
                 val request = Request.Builder()
                     .url(url)
                     .header("x-access-token", token)
                     .post(body)
                     .build()
-
+    
                 val result = withContext(Dispatchers.IO) {
                     try {
                         val response = client.newCall(request).execute()
-                        val responseBody = response.body?.string() ?: ""
+                        val responseBody = response.body.string()
                         if (response.isSuccessful) {
                             json.decodeFromString<SendMessageResponse>(responseBody)
                         } else {
                             val status = try {
                                 json.decodeFromString<ChatStatus>(responseBody)
-                            } catch (e: Exception) {
+                            } catch (_: Exception) {
                                 ChatStatus(number = response.code, code = -1, msg = "发送失败")
                             }
                             SendMessageResponse(status = status)
@@ -223,15 +233,10 @@ class MessageDetailViewModel(
                         SendMessageResponse(status = ChatStatus(-1, -1, e.message ?: "未知错误"))
                     }
                 }
-
+    
                 if (result.status.code == 0) {
-                    _uiState.update {
-                        it.copy(
-                            inputText = "",
-                            selectedImages = emptyList()
-                        )
-                    }
-                    refresh()
+                    _uiState.update { it.copy(inputText = "", selectedImages = emptyList()) }
+                    _replyTo.value = null
                 } else {
                     _toastMessage.emit(result.status.msg)
                 }
@@ -250,7 +255,6 @@ class MessageDetailViewModel(
         _recallDialog.update { RecallDialogState() }
     }
 
-    // 撤回消息
     fun recallMessage() {
         val msgId = _recallDialog.value.messageId ?: return
         viewModelScope.launch {
@@ -274,7 +278,7 @@ class MessageDetailViewModel(
                 val result = withContext(Dispatchers.IO) {
                     try {
                         val response = client.newCall(request).execute()
-                        val responseBody = response.body?.string() ?: ""
+                        val responseBody = response.body.string()
                         json.decodeFromString<RecallResponse>(responseBody)
                     } catch (e: Exception) {
                         RecallResponse(success = false, message = "操作失败: ${e.message}")
@@ -283,15 +287,18 @@ class MessageDetailViewModel(
 
                 if (result.success) {
                     _toastMessage.emit(result.message ?: "撤回成功")
-                    // Update the message locally to show as recalled
+                    val hint = result.recall_hint ?: "你撤回了消息"
                     _uiState.update { state ->
                         state.copy(
                             messages = state.messages.map { msg ->
-                                if (msg.msgId == msgId) {
+                                if (msg.effectiveMsgId == msgId) {
                                     msg.copy(
                                         msgDeleteTime = System.currentTimeMillis(),
-                                        content = result.message ?: "消息已撤回",
-                                        isSystem = true
+                                        content = "",
+                                        images = emptyList(),
+                                        isRecalled = true,
+                                        isSystem = false,
+                                        recallHint = hint
                                     )
                                 } else msg
                             }
@@ -315,9 +322,14 @@ class MessageDetailViewModel(
                 isOpen = true,
                 message = message,
                 newContent = message.content,
-                newImages = emptyList()
+                newImages = message.images,
+                isMarkdown = message.isMarkdown
             )
         }
+    }
+    
+    fun toggleEditMarkdown() {
+        _editDialog.update { it.copy(isMarkdown = !it.isMarkdown) }
     }
 
     fun hideEditDialog() {
@@ -346,19 +358,19 @@ class MessageDetailViewModel(
                 }
                 
                 val jsonObject = buildJsonObject {
-                    put("message_id", message.msgId)
+                    put("message_id", message.effectiveMsgId)
                     if (chatType == 1) {
                         put("new_content", dialogState.newContent)
                         put("new_images", buildJsonArray {
                             dialogState.newImages.forEach { add(JsonPrimitive(it)) }
                         })
-                        put("new_is_markdown", false)
+                        put("new_is_markdown", dialogState.isMarkdown)
                     } else {
                         put("content", dialogState.newContent)
                         put("images", buildJsonArray {
                             dialogState.newImages.forEach { add(JsonPrimitive(it)) }
                         })
-                        put("is_markdown", false)
+                        put("is_markdown", dialogState.isMarkdown)
                     }
                 }
                 val bodyJson = jsonObject.toString()
@@ -372,8 +384,14 @@ class MessageDetailViewModel(
                 val result = withContext(Dispatchers.IO) {
                     try {
                         val response = client.newCall(request).execute()
-                        val responseBody = response.body?.string() ?: ""
-                        json.decodeFromString<ChatStatus>(responseBody)
+                        val responseBody = response.body.string()
+                        if (response.isSuccessful) {
+                            val jsonElement = json.decodeFromString<JsonElement>(responseBody)
+                            val msg = jsonElement.jsonObject["msg"]?.jsonPrimitive?.content
+                            ChatStatus(number = 200, code = 0, msg = msg ?: "编辑成功")
+                        } else {
+                            ChatStatus(number = response.code, code = -1, msg = "编辑失败")
+                        }
                     } catch (e: Exception) {
                         ChatStatus(number = -1, code = -1, msg = "编辑失败: ${e.message}")
                     }
@@ -420,7 +438,7 @@ class MessageDetailViewModel(
                     } else {
                         null
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     null
                 }
     
@@ -468,47 +486,64 @@ class MessageDetailViewModel(
 
     fun connectWebSocket() {
         if (token.isNotBlank()) {
-            val manager = PrivateChatSocketManager.getInstance()
+            val manager = ChatSocketManager.getInstance()
+            // 先移除旧的观察者，避免重复注册
+            manager.removeObserver(messageObserver)
+            // 再添加新的观察者
             manager.addObserver(messageObserver)
             manager.connect(token)
         }
     }
 
     fun disconnectWebSocket() {
-        val manager = PrivateChatSocketManager.getInstance()
+        val manager = ChatSocketManager.getInstance()
         manager.removeObserver(messageObserver)
     }
 
-    private val messageObserver: (type: String, message: Message) -> Unit = { type, message ->
-        when (type) {
-            "new", "edit", "recall" -> {
-                // 判断是否是当前会话的消息
-                if (message.sender.chatId == chatId.toString() && message.sender.chatType == chatType) {
-                    when (type) {
-                        "new" -> addNewMessage(message)
-                        "edit" -> updateMessage(message)
-                        "recall" -> removeMessage(message.msgId)
+    private val messageObserver: (type: String, chatId: String, chatType: Int, message: Message) -> Unit = 
+        { type, pushChatId, pushChatType, message ->
+            when (type) {
+                "new", "edit", "recall" -> {
+                    val isCurrentChat = pushChatType == this.chatType && pushChatId == this.chatId.toString()
+                    if (isCurrentChat) {
+                        when (type) {
+                            "new" -> addNewMessage(message)
+                            "edit" -> updateMessage(message)
+                            "recall" -> removeMessage(message.msgId)
+                        }
                     }
                 }
             }
         }
-    }
 
     private fun addNewMessage(message: Message) {
-        // reverseLayout = false: 新消息添加到列表末尾
-        _uiState.update { it.copy(messages = it.messages + message) }
+        _uiState.update { state ->
+            if (state.messages.any { it.effectiveMsgId == message.effectiveMsgId }) state
+            else state.copy(messages = listOf(message) + state.messages)
+        }
     }
 
     private fun updateMessage(message: Message) {
         _uiState.update { state ->
-            val updated = state.messages.map { if (it.msgId == message.msgId) message else it }
+            val updated = state.messages.map { if (it.effectiveMsgId == message.effectiveMsgId) message else it }
             state.copy(messages = updated)
         }
     }
 
     private fun removeMessage(msgId: String) {
         _uiState.update { state ->
-            val updated = state.messages.filter { it.msgId != msgId }
+            val updated = state.messages.map { msg ->
+                if (msg.effectiveMsgId == msgId) {
+                    val senderName = msg.displayName.ifEmpty { "对方" }
+                    msg.copy(
+                        msgDeleteTime = System.currentTimeMillis(),
+                        content = "",
+                        images = emptyList(),
+                        isRecalled = true,
+                        recallHint = "$senderName 撤回了消息"
+                    )
+                } else msg
+            }
             state.copy(messages = updated)
         }
     }

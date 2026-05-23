@@ -1,10 +1,12 @@
 package com.example.toolbox.message
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,14 +22,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -38,7 +35,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,6 +59,7 @@ import coil3.compose.AsyncImage
 import com.example.toolbox.ApiAddress
 import com.example.toolbox.TokenManager
 import com.example.toolbox.data.GroupMember
+import com.example.toolbox.community.UserInfoActivity
 import com.example.toolbox.ui.theme.ToolBoxTheme
 
 class GroupMembersActivity : ComponentActivity() {
@@ -229,129 +226,105 @@ fun MemberItem(
     onMute: () -> Unit,
     onUnmute: () -> Unit
 ) {
+    val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (member.role == 2) MaterialTheme.colorScheme.primaryContainer
-                else if (member.role == 1) MaterialTheme.colorScheme.secondaryContainer
-                else MaterialTheme.colorScheme.surface
-        )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                val intent = Intent(context, UserInfoActivity::class.java)
+                intent.putExtra("userId", member.userId)
+                context.startActivity(intent)
+            }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
+        AsyncImage(
+            model = if (member.avatarUrl.startsWith("http")) member.avatarUrl
+                else "${ApiAddress}uploads/${member.avatarUrl}",
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AsyncImage(
-                model = if (member.avatarUrl.startsWith("http")) member.avatarUrl
-                    else "${ApiAddress}uploads/${member.avatarUrl}",
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
+                .size(48.dp)
+                .clip(CircleShape)
+        )
+        
+        Spacer(modifier = Modifier.width(12.dp))
+        
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = member.nickname.ifEmpty { member.username },
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
             )
             
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.padding(2.dp))
             
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = member.nickname.ifEmpty { member.username },
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    if (member.tags.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        member.tags.forEach { tag ->
-                            Surface(
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(end = 4.dp)
-                            ) {
-                                Text(
-                                    text = tag,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
+            Text(
+                text = when (member.role) {
+                    2 -> "群主"
+                    1 -> "管理员"
+                    else -> "成员"
+                },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (myRole > 0 && member.role < 2) {
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
                 
-                Spacer(modifier = Modifier.padding(2.dp))
-                
-                Text(
-                    text = when (member.role) {
-                        2 -> "群主"
-                        1 -> "管理员"
-                        else -> "成员"
-                    },
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            // 操作按钮 (只有群主和管理员可以操作，且不能操作群主)
-            if (myRole > 0 && member.role < 2) {
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    if (myRole == 2) {
+                        if (member.role == 0) {
+                            DropdownMenuItem(
+                                text = { Text("设为管理员") },
+                                onClick = {
+                                    showMenu = false
+                                    onSetAdmin()
+                                }
+                            )
+                        } else if (member.role == 1) {
+                            DropdownMenuItem(
+                                text = { Text("取消管理员") },
+                                onClick = {
+                                    showMenu = false
+                                    onRemoveAdmin()
+                                }
+                            )
+                        }
                     }
                     
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        // 只有群主可以设置/取消管理员
-                        if (myRole == 2) {
-                            if (member.role == 0) {
-                                DropdownMenuItem(
-                                    text = { Text("设为管理员") },
-                                    onClick = {
-                                        showMenu = false
-                                        onSetAdmin()
-                                    }
-                                )
-                            } else if (member.role == 1) {
-                                DropdownMenuItem(
-                                    text = { Text("取消管理员") },
-                                    onClick = {
-                                        showMenu = false
-                                        onRemoveAdmin()
-                                    }
-                                )
-                            }
+                    DropdownMenuItem(
+                        text = { Text("禁言") },
+                        onClick = {
+                            showMenu = false
+                            onMute()
                         }
-                        
-                        DropdownMenuItem(
-                            text = { Text("禁言") },
-                            onClick = {
-                                showMenu = false
-                                onMute()
-                            }
-                        )
-                        
-                        DropdownMenuItem(
-                            text = { Text("解除禁言") },
-                            onClick = {
-                                showMenu = false
-                                onUnmute()
-                            }
-                        )
-                        
-                        DropdownMenuItem(
-                            text = { Text("踢出群聊") },
-                            onClick = {
-                                showMenu = false
-                                onKick()
-                            }
-                        )
-                    }
+                    )
+                    
+                    DropdownMenuItem(
+                        text = { Text("解除禁言") },
+                        onClick = {
+                            showMenu = false
+                            onUnmute()
+                        }
+                    )
+                    
+                    DropdownMenuItem(
+                        text = { Text("踢出群聊") },
+                        onClick = {
+                            showMenu = false
+                            onKick()
+                        }
+                    )
                 }
             }
         }

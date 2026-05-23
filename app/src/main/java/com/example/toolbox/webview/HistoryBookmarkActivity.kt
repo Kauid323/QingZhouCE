@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,7 +50,12 @@ import androidx.compose.ui.unit.dp
 import com.example.toolbox.ui.theme.ToolBoxTheme
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
+import androidx.compose.ui.platform.LocalLocale
+
+data class HistoryGroup(
+    val label: String,
+    val items: List<Bookmark>
+)
 
 class HistoryBookmarkActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,6 +67,40 @@ class HistoryBookmarkActivity : ComponentActivity() {
             }
         }
     }
+}
+
+fun groupHistoryByTime(history: List<Bookmark>): List<HistoryGroup> {
+    val now = System.currentTimeMillis()
+    val calendar = java.util.Calendar.getInstance()
+
+    // 今天 0 点
+    calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    calendar.set(java.util.Calendar.MINUTE, 0)
+    calendar.set(java.util.Calendar.SECOND, 0)
+    calendar.set(java.util.Calendar.MILLISECOND, 0)
+    val todayStart = calendar.timeInMillis
+
+    // 昨天 0 点
+    val yesterdayStart = todayStart - 24 * 60 * 60 * 1000L
+    // 7 天前 0 点
+    val weekStart = todayStart - 7 * 24 * 60 * 60 * 1000L
+    // 30 天前 0 点
+    val monthStart = todayStart - 30L * 24 * 60 * 60 * 1000L
+
+    val grouped = LinkedHashMap<String, MutableList<Bookmark>>()
+
+    for (item in history) {
+        val label = when {
+            item.timeAdded >= todayStart -> "今天"
+            item.timeAdded >= yesterdayStart -> "昨天"
+            item.timeAdded >= weekStart -> "7 天内"
+            item.timeAdded >= monthStart -> "30 天内"
+            else -> "更早"
+        }
+        grouped.getOrPut(label) { mutableListOf() }.add(item)
+    }
+
+    return grouped.map { (label, items) -> HistoryGroup(label, items) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,18 +119,27 @@ fun HistoryBookmarkScreen(onBackClick: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("浏览记录与书签") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            Column {
+                TopAppBar(
+                    title = { Text("浏览记录与书签") },
+                    navigationIcon = {
+                        IconButton(onClick = onBackClick) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
+                        if (selectedTab == 0 && historyList.isNotEmpty()) {
+                            IconButton(onClick = {
+                                historyManager.clearHistory()
+                                historyList = emptyList()
+                            }) {
+                                Icon(Icons.Default.Clear, contentDescription = "清空历史")
+                            }
+                        }
                     }
-                }
-            )
-        },
-        bottomBar = {
-            BottomAppBar {
-                SecondaryTabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth()) {
+                )
+                
+                SecondaryTabRow(selectedTabIndex = selectedTab) {
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
@@ -116,16 +163,14 @@ fun HistoryBookmarkScreen(onBackClick: () -> Unit) {
                     onItemClick = { url ->
                         val intent = Intent(context, WebViewActivity::class.java).apply {
                             putExtra("url", url)
+                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         }
                         context.startActivity(intent)
+                        (context as? ComponentActivity)?.finish()
                     },
                     onDeleteItem = { item ->
                         historyManager.deleteHistoryItem(item)
                         historyList = historyManager.getHistory()
-                    },
-                    onClearAll = {
-                        historyManager.clearHistory()
-                        historyList = emptyList()
                     },
                     isBookmarked = { url -> bookmarkManager.isBookmarked(url) },
                     onToggleBookmark = { title, url ->
@@ -135,6 +180,7 @@ fun HistoryBookmarkScreen(onBackClick: () -> Unit) {
                             bookmarkManager.addBookmark(title, url)
                         }
                         bookmarksList = bookmarkManager.getBookmarks()
+                        historyList = historyManager.getHistory()
                     }
                 )
                 1 -> BookmarksTab(
@@ -142,8 +188,10 @@ fun HistoryBookmarkScreen(onBackClick: () -> Unit) {
                     onItemClick = { url ->
                         val intent = Intent(context, WebViewActivity::class.java).apply {
                             putExtra("url", url)
+                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         }
                         context.startActivity(intent)
+                        (context as? ComponentActivity)?.finish()
                     },
                     onDeleteItem = { item ->
                         bookmarkManager.removeBookmark(item)
@@ -160,32 +208,40 @@ fun HistoryTab(
     historyList: List<Bookmark>,
     onItemClick: (String) -> Unit,
     onDeleteItem: (Bookmark) -> Unit,
-    onClearAll: () -> Unit,
     isBookmarked: (String) -> Boolean,
     onToggleBookmark: (String, String) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalArrangement = Arrangement.End
-        ) {
-            IconButton(onClick = onClearAll) {
-                Icon(Icons.Default.Clear, contentDescription = "清空历史")
-            }
+    if (historyList.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("暂无浏览历史", style = MaterialTheme.typography.bodyLarge)
         }
+    } else {
+        val groups = remember(historyList) { groupHistoryByTime(historyList) }
 
-        if (historyList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无浏览历史", style = MaterialTheme.typography.bodyLarge)
-            }
-        } else {
-            LazyColumn {
-                items(historyList) { item ->
+        LazyColumn {
+            groups.forEach { group ->
+                item(key = "header_${group.label}") {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        tonalElevation = 1.dp
+                    ) {
+                        Text(
+                            text = group.label,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                items(group.items, key = { it.id }) { item ->
+                    val bookmarked = isBookmarked(item.url)
                     HistoryItem(
                         bookmark = item,
                         onClick = { onItemClick(item.url) },
                         onDelete = { onDeleteItem(item) },
-                        isBookmarked = isBookmarked(item.url),
+                        isBookmarked = bookmarked,
                         onToggleBookmark = { onToggleBookmark(item.title, item.url) }
                     )
                 }
@@ -227,6 +283,21 @@ fun HistoryItem(
     isBookmarked: Boolean,
     onToggleBookmark: () -> Unit
 ) {
+    val calendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val todayStart = calendar.timeInMillis
+    val yesterdayStart = todayStart - 24 * 60 * 60 * 1000L
+    
+    val timeText = when {
+        bookmark.timeAdded >= todayStart -> "今天 " + SimpleDateFormat("HH:mm", LocalLocale.current.platformLocale).format(Date(bookmark.timeAdded))
+        bookmark.timeAdded >= yesterdayStart -> "昨天 " + SimpleDateFormat("HH:mm", LocalLocale.current.platformLocale).format(Date(bookmark.timeAdded))
+        else -> SimpleDateFormat("yyyy-MM-dd HH:mm", LocalLocale.current.platformLocale).format(Date(bookmark.timeAdded))
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         tonalElevation = 1.dp
@@ -259,8 +330,7 @@ fun HistoryItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                        .format(Date(bookmark.timeAdded)),
+                    text = timeText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )

@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import coil3.compose.AsyncImage
+import com.example.toolbox.webview.WebViewActivity
 import com.mikepenz.markdown.coil3.Coil3ImageTransformerImpl
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
@@ -40,7 +41,6 @@ object MarkdownRenderer {
         onImageClick: ((String, String) -> Unit)? = null
     ) {
         val context = LocalContext.current
-        val defaultUriHandler = LocalUriHandler.current
 
         val customUriHandler = remember(onLinkClick) {
             object : UriHandler {
@@ -48,15 +48,30 @@ object MarkdownRenderer {
                     if (onLinkClick != null) {
                         onLinkClick(uri)
                     } else {
-                        try {
-                            defaultUriHandler.openUri(uri)
-                        } catch (_: Exception) {
-                            runCatching {
+                        val isHttp = uri.startsWith("http://") || uri.startsWith("https://")
+                        
+                        if (isHttp) {
+                            try {
+                                val intent = Intent(context, WebViewActivity::class.java).apply {
+                                    putExtra(WebViewActivity.EXTRA_URL, uri)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, uri.toUri())
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
+                        } else {
+                            try {
                                 context.startActivity(
                                     Intent(Intent.ACTION_VIEW, uri.toUri())
                                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 )
-                            }
+                            } catch (_: Exception) {}
                         }
                     }
                 }
@@ -91,7 +106,7 @@ object MarkdownRenderer {
                 content = content,
                 modifier = modifier,
                 components = components,
-                imageTransformer = Coil3ImageTransformerImpl,  // 图片加载器
+                imageTransformer = Coil3ImageTransformerImpl,
                 typography = markdownTypography(
                     h1 = MaterialTheme.typography.headlineLarge,
                     h2 = MaterialTheme.typography.headlineMedium,

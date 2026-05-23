@@ -4,10 +4,13 @@ package com.example.toolbox.functionPage
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import kotlinx.coroutines.delay
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -19,17 +22,17 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.AddToHomeScreen
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.material3.TopAppBarDefaults.topAppBarColors
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -51,6 +54,7 @@ import com.example.toolbox.utils.UserAvatar
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.core.content.edit
+import androidx.core.graphics.createBitmap
 
 object ExpandedStatePrefs {
     private const val PREFS_NAME = "functionCategory_expanded"
@@ -82,6 +86,7 @@ fun HomeScreen(
     var functionToFavorite by remember { mutableStateOf<FunctionItem?>(null) }
     
     var favoriteRefreshTrigger by remember { mutableIntStateOf(0) }
+    var favoriteIds by remember { mutableStateOf(FavoriteManager.getFavorites(context).toSet()) }
     
     val viewModel: YiYanViewModel = viewModel()
     val aWordText by viewModel.hitokoto.collectAsState()
@@ -89,16 +94,47 @@ fun HomeScreen(
     val dayFormat = remember { SimpleDateFormat("d", Locale.getDefault()) }
     val yearWeekFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.ENGLISH) }
     val currentDate = remember { Date() }
+    
+    val expandedState = rememberSaveable(
+        saver = mapSaver(
+            save = { it.toMap() as Map<String, Any?> },
+            restore = {
+                val map = mutableStateMapOf<String, Boolean>()
+                it.forEach { (key, value) ->
+                    map[key] = value as? Boolean ?: false
+                }
+                map
+            }
+        )
+    ) {
+        mutableStateMapOf()
+    }
+    
+    var expandedStateInitialized by rememberSaveable { mutableStateOf(false) }
+    
+    var dayProgress by remember { mutableFloatStateOf(0f) }
 
-    val expandedState = remember { mutableStateMapOf<String, Boolean>() }
+    val animatedProgress by animateFloatAsState(
+        targetValue = dayProgress,
+        animationSpec = tween(durationMillis = 500),
+        label = "progress"
+    )
 
     LaunchedEffect(Unit) {
-        if (expandedState.isEmpty()) {
-            val loadedState = functionData.associate { category ->
-                category.name to ExpandedStatePrefs.getExpanded(context, category.name, true)
+        if (!expandedStateInitialized) {
+            val loaded = functionData.associate { it.name to 
+                ExpandedStatePrefs.getExpanded(context, it.name, true) 
             }.toMutableMap()
-            loadedState["我的收藏"] = ExpandedStatePrefs.getExpanded(context, "我的收藏", false)
-            expandedState.putAll(loadedState)
+            loaded["我的收藏"] = ExpandedStatePrefs.getExpanded(context, "我的收藏", false)
+            expandedState.putAll(loaded)
+            expandedStateInitialized = true
+        }
+        while (true) {
+            val calendar = Calendar.getInstance()
+            val totalMinutes = 24 * 60
+            val currentMinutes = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
+            dayProgress = currentMinutes.toFloat() / totalMinutes
+            delay(60000)
         }
     }
 
@@ -110,11 +146,11 @@ fun HomeScreen(
         }
     }
 
-    val favoriteFunctions by remember(favoriteRefreshTrigger) {
-        derivedStateOf { FavoriteManager.getFavoriteFunctions(context, allFunctions) }
+    val favoriteFunctions = remember(favoriteRefreshTrigger, allFunctions) {
+        FavoriteManager.getFavoriteFunctions(context, allFunctions)
     }
 
-    val filteredFunctions = remember(searchText) {
+    val filteredFunctions = remember(searchText, favoriteRefreshTrigger) {
         if (searchText.isBlank()) allFunctions
         else allFunctions.filter {
             it.function.name.contains(searchText, ignoreCase = true) ||
@@ -197,7 +233,7 @@ fun HomeScreen(
                         }
                     ) {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(filteredFunctions) { searchModel ->
+                            items(filteredFunctions, key = { it.function.activity }) { searchModel ->
                                 SearchFunctionItem(
                                     function = searchModel,
                                     modifier = Modifier
@@ -207,10 +243,7 @@ fun HomeScreen(
                                         functionToFavorite = it.function
                                         showFavoriteDialog = true
                                     },
-                                    isFavorite = FavoriteManager.isFavorite(
-                                        context,
-                                        searchModel.function.activity
-                                    )
+                                    isFavorite = searchModel.function.activity in favoriteIds
                                 )
                             }
                             item {
@@ -234,8 +267,6 @@ fun HomeScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
-
             item {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
@@ -244,64 +275,89 @@ fun HomeScreen(
                 ) {
                     val dayOfMonth = dayFormat.format(currentDate)
                     val yearAndWeek = yearWeekFormat.format(currentDate)
+                    
+                    val greeting = remember(currentDate) {
+                        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                        when (hour) {
+                            in 5..11 -> "早上好"
+                            in 12..13 -> "中午好"
+                            in 14..17 -> "下午好"
+                            in 18..22 -> "晚上好"
+                            else -> "夜深了"
+                        }
+                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxSize()
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .weight(1f),
-                            verticalArrangement = Arrangement.Center
+                        Row(
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            Text(
-                                text = "日月如梭",
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            Column(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 12.dp, start = 15.dp)
-                            )
-
-                            Row {
-                                Spacer(modifier = Modifier.width(15.dp))
+                                    .fillMaxHeight()
+                                    .weight(1f),
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Text(
-                                    text = aWordText,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    text = greeting,
+                                    style = MaterialTheme.typography.titleLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .basicMarquee()
-                                        .padding(top = 8.dp, bottom = 12.dp)
+                                        .padding(top = 12.dp, start = 15.dp)
+                                )
+                
+                                Row {
+                                    Spacer(modifier = Modifier.width(15.dp))
+                                    Text(
+                                        text = aWordText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .basicMarquee()
+                                            .padding(top = 8.dp, bottom = 12.dp)
+                                    )
+                                }
+                            }
+                
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(start = 10.dp),
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = dayOfMonth,
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    modifier = Modifier.padding(top = 12.dp, end = 15.dp)
+                                )
+                
+                                Spacer(modifier = Modifier.height(8.dp))
+                
+                                Text(
+                                    text = yearAndWeek,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(bottom = 12.dp, end = 15.dp)
                                 )
                             }
                         }
-
-                        Column(
+                        
+                        LinearProgressIndicator(
+                            progress = animatedProgress,
                             modifier = Modifier
-                                .fillMaxHeight()
-                                .padding(start = 10.dp),
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = dayOfMonth,
-                                style = MaterialTheme.typography.headlineLarge,
-                                modifier = Modifier.padding(top = 12.dp, end = 15.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = yearAndWeek,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(bottom = 12.dp, end = 15.dp)
-                            )
-                        }
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .align(Alignment.BottomCenter),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -338,7 +394,8 @@ fun HomeScreen(
                     onLongPress = {
                         functionToFavorite = it
                         showFavoriteDialog = true
-                    }
+                    },
+                    favoriteIds = favoriteIds
                 )
             }
 
@@ -354,36 +411,70 @@ fun HomeScreen(
 
     if (showFavoriteDialog && functionToFavorite != null) {
         val isFavorite = FavoriteManager.isFavorite(context, functionToFavorite!!.activity)
+        val function = functionToFavorite!!
+    
         AlertDialog(
-            onDismissRequest = { showFavoriteDialog = false },
-            title = { Text(text = if (isFavorite) "取消收藏" else "添加到收藏") },
-            text = { Text(text = "功能：${functionToFavorite!!.name}") },
-            confirmButton = {
-                Text(
-                    text = if (isFavorite) "取消收藏" else "收藏",
-                    modifier = Modifier
-                        .clickable {
+            onDismissRequest = {
+                showFavoriteDialog = false
+                functionToFavorite = null
+            },
+            title = {
+                Text(text = function.name)
+            },
+            text = {
+                Column {
+                    ListItem(
+                        headlineContent = { Text("创建快捷方式") },
+                        leadingContent = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.AddToHomeScreen,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        modifier = Modifier.clickable {
+                            createShortcut(context, function)
+                            showFavoriteDialog = false
+                            functionToFavorite = null
+                        }
+                    )
+    
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                if (isFavorite) "取消收藏" else "添加到收藏",
+                                color = if (isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        leadingContent = {
+                            Icon(
+                                if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder,
+                                contentDescription = null,
+                                tint = if (isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        modifier = Modifier.clickable {
                             if (isFavorite) {
-                                FavoriteManager.removeFavorite(
-                                    context,
-                                    functionToFavorite!!.activity
-                                )
+                                FavoriteManager.removeFavorite(context, function.activity)
                             } else {
-                                FavoriteManager.addFavorite(context, functionToFavorite!!.activity)
+                                FavoriteManager.addFavorite(context, function.activity)
                             }
+                            favoriteIds = FavoriteManager.getFavorites(context).toSet()
                             favoriteRefreshTrigger++
                             showFavoriteDialog = false
+                            functionToFavorite = null
                         }
-                        .padding(16.dp)
-                )
+                    )
+                }
             },
+            confirmButton = {},
             dismissButton = {
-                Text(
-                    text = "取消",
-                    modifier = Modifier
-                        .clickable { showFavoriteDialog = false }
-                        .padding(16.dp)
-                )
+                TextButton(onClick = {
+                    showFavoriteDialog = false
+                    functionToFavorite = null
+                }) {
+                    Text("取消")
+                }
             }
         )
     }
@@ -524,7 +615,8 @@ private fun CategoryCard(
     isLastCategory: Boolean,
     onToggle: () -> Unit,
     context: Context,
-    onLongPress: (FunctionItem) -> Unit
+    onLongPress: (FunctionItem) -> Unit,
+    favoriteIds: Set<String>
 ) {
     val cornerRadius = 24.dp
     val smallRadius = 4.dp
@@ -606,7 +698,7 @@ private fun CategoryCard(
                                     function = item,
                                     modifier = Modifier.weight(1f),
                                     onLongPress = { onLongPress(it) },
-                                    isFavorite = FavoriteManager.isFavorite(context, item.activity)
+                                    isFavorite = item.activity in favoriteIds
                                 )
                             }
                             repeat(3 - rowItems.size) { Spacer(modifier = Modifier.weight(1f)) }
@@ -616,5 +708,85 @@ private fun CategoryCard(
                 }
             }
         }
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun createShortcut(context: Context, function: FunctionItem) {
+    try {
+        val targetClass = Class.forName(function.activity)
+        val targetIntent = Intent(context, targetClass).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+        }
+
+        val composeColor = IconColorMap.getColor(function.iconColorName)
+            ?: androidx.compose.ui.graphics.Color(0xFF2196F3)
+        val iconColor = android.graphics.Color.argb(
+            (composeColor.alpha * 255).toInt(),
+            (composeColor.red * 255).toInt(),
+            (composeColor.green * 255).toInt(),
+            (composeColor.blue * 255).toInt()
+        )
+        val size = 192
+        val bitmap = createBitmap(size, size)
+        val canvas = android.graphics.Canvas(bitmap)
+
+        val paint = android.graphics.Paint().apply {
+            color = iconColor
+            style = android.graphics.Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val radius = size * 0.2f
+        canvas.drawRoundRect(0f, 0f, size.toFloat(), size.toFloat(), radius, radius, paint)
+
+        val textPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = size * 0.5f
+            textAlign = android.graphics.Paint.Align.CENTER
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val firstChar = function.name.firstOrNull()?.toString() ?: "?"
+        val metrics = textPaint.fontMetrics
+        val y = size / 2f - (metrics.ascent + metrics.descent) / 2f
+        canvas.drawText(firstChar, size / 2f, y, textPaint)
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val shortcutManager = context.getSystemService(android.content.pm.ShortcutManager::class.java)
+            
+            if (shortcutManager != null && shortcutManager.isRequestPinShortcutSupported) {
+                val icon = android.graphics.drawable.Icon.createWithBitmap(bitmap)
+                
+                val pinShortcutInfo = android.content.pm.ShortcutInfo.Builder(context, function.activity)
+                    .setShortLabel(function.name)
+                    .setLongLabel(function.name)
+                    .setIcon(icon)
+                    .setIntent(targetIntent)
+                    .build()
+
+                shortcutManager.requestPinShortcut(pinShortcutInfo, null)
+                Toast.makeText(context, "请确认添加快捷方式", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "当前启动器不支持快捷方式", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            val shortcutIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
+                putExtra(Intent.EXTRA_SHORTCUT_INTENT, targetIntent)
+                putExtra(Intent.EXTRA_SHORTCUT_NAME, function.name)
+                putExtra(Intent.EXTRA_SHORTCUT_ICON, bitmap)
+                putExtra("duplicate", false)
+            }
+            
+            context.sendBroadcast(shortcutIntent)
+            Toast.makeText(context, "已创建快捷方式", Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: ClassNotFoundException) {
+        e.printStackTrace()
+        Toast.makeText(context, "创建失败：功能不可用", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Toast.makeText(context, "创建快捷方式失败: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }

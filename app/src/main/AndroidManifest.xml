@@ -1,18 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_IMAGES"
-        tools:ignore="PhotoAndVideoPolicy" />
-    <uses-permission
+    
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    
+    <uses-permission 
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    
+    <uses-permission 
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        tools:ignore="AllFilesAccessPolicy,ScopedStorage" />
+        tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission
         android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
@@ -22,6 +24,7 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE"
         tools:ignore="ForegroundServicesPolicy" /> <!-- 检测无障碍服务是否已启用（需要查询设置） -->
@@ -72,6 +75,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.ToolBox">
         <activity
@@ -96,10 +100,25 @@
             android:theme="@style/Theme.ToolBox" />
         <activity
             android:name=".message.GroupInfoActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ToolBox">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="group"
+                    android:scheme="qz" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".message.GroupMembersActivity"
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity
-            android:name=".message.GroupMembersActivity"
+            android:name=".message.JoinRequestsActivity"
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity
@@ -318,7 +337,47 @@
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity
-            android:name=".function.visual.QRCodeGeneratorActivity"
+            android:name=".function.text.UnicodeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.URLActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.MD5Activity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.JSONFormatActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.TimestampActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.HTMLEntityActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.JWTParseActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.UUIDGeneratorActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.RegexTesterActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.text.TextDiffActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.visual.BarcodeGeneratorActivity"
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity
@@ -330,7 +389,15 @@
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity
+            android:name=".function.daily.TimerDetailActivity"
+            android:exported="false" 
+            android:theme="@style/Theme.ToolBox" />
+        <activity
             android:name=".function.daily.StopWatchActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ToolBox" />
+        <activity
+            android:name=".function.daily.WebSocketTestActivity"
             android:exported="false"
             android:theme="@style/Theme.ToolBox" />
         <activity

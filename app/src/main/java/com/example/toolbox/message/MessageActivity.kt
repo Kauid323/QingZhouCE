@@ -43,16 +43,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -68,17 +68,21 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.ui.res.painterResource
+import com.example.toolbox.R
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -91,12 +95,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -112,14 +118,17 @@ import com.example.toolbox.data.RecallDialogState
 import com.example.toolbox.data.SendMessageRequest
 import com.example.toolbox.data.SendMessageResponse
 import com.example.toolbox.ui.theme.ToolBoxTheme
-import com.example.toolbox.utils.MarkdownRenderer
 import com.example.toolbox.utils.MultiImageViewer
+import com.example.toolbox.utils.MarkdownRenderer
 import coil3.compose.AsyncImage
-import coil3.compose.rememberAsyncImagePainter
+import com.example.toolbox.data.displayAvatar
+import com.example.toolbox.data.displayName
+import com.example.toolbox.data.effectiveMsgId
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.distinctUntilChanged
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -187,7 +196,6 @@ class MessageDetailActivity : ComponentActivity() {
         setContent {
             ToolBoxTheme {
                 val token = TokenManager.get(this)
-                val context = LocalContext.current
                 val viewModel: MessageDetailViewModel = viewModel(
                     factory = token?.let { MessageDetailViewModelFactory(it, chatType, finalChatId) }
                 )
@@ -199,7 +207,6 @@ class MessageDetailActivity : ComponentActivity() {
                         TopAppBar(
                             title = {
                                 if (chatType == 2 && uiState.groupInfo != null) {
-                                    // 群聊显示群信息
                                     val group = uiState.groupInfo!!
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -231,49 +238,47 @@ class MessageDetailActivity : ComponentActivity() {
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column {
                                             Text(
-                                                text = "${group.name} (${group.membersCount})",
+                                                text = group.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 16.sp
+                                            )
+                                            Text(
+                                                text = "${group.membersCount} 名成员",
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                } else if (uiState.otherUser != null) {
+                                    val otherUser = uiState.otherUser!!
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                startActivity(
+                                                    Intent(this@MessageDetailActivity, UserInfoActivity::class.java).apply {
+                                                        putExtra("userId", otherUser.id)
+                                                    }
+                                                )
+                                            }
+                                    ) {
+                                        AsyncImage(
+                                            model = otherUser.avatar,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = otherUser.username,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 16.sp
                                             )
                                         }
-                                    }
-                                } else if (uiState.messages.isNotEmpty()) {
-                                    val firstMessage = uiState.messages.first()
-                                    if (chatType == 1 && firstMessage.direction == "left") {
-                                        // 私聊显示对方信息
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    startActivity(
-                                                        Intent(this@MessageDetailActivity, UserInfoActivity::class.java).apply {
-                                                            putExtra("userId", firstMessage.sender.chatId.toIntOrNull() ?: 0)
-                                                        }
-                                                    )
-                                                }
-                                        ) {
-                                            AsyncImage(
-                                                model = firstMessage.sender.avatarUrl,
-                                                contentDescription = null,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(36.dp)
-                                                    .clip(CircleShape)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Column {
-                                                Text(
-                                                    text = firstMessage.sender.name,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 16.sp
-                                                )
-                                            }
-                                        }
-                                    } else if (chatType == 1) {
-                                        Text("聊天")
-                                    } else {
-                                        Text("聊天详情")
                                     }
                                 } else {
                                     Text("聊天详情")
@@ -310,15 +315,12 @@ fun MessageDetailScreen(
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val uiState by viewModel.uiState.collectAsState()
-    var previousMessages by remember { mutableStateOf(uiState.messages) }
+    var firstMessageId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(viewModel) {
         viewModel.connectWebSocket()
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.disconnectWebSocket()
+        viewModel.toastMessage.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -340,32 +342,26 @@ fun MessageDetailScreen(
     var showImageViewer by remember { mutableStateOf(false) }
     var imageViewerUrls by remember { mutableStateOf<List<String>>(emptyList()) }
     var imageViewerInitialPage by remember { mutableIntStateOf(0) }
+    
+    val replyTo by viewModel.replyTo.collectAsState()
 
-    LaunchedEffect(viewModel) {
-        viewModel.toastMessage.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // reverseLayout = false: 加载更多检测滚动到顶部
     LaunchedEffect(listState) {
         snapshotFlow {
             val layoutInfo = listState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
             if (visibleItems.isNotEmpty()) {
-                val firstVisibleIndex = visibleItems.first().index
-                firstVisibleIndex < 5 && uiState.hasMore && !uiState.isLoadingMore
+                val lastVisibleIndex = visibleItems.last().index
+                val totalItems = layoutInfo.totalItemsCount
+                lastVisibleIndex >= totalItems - 5 && uiState.hasMore && !uiState.isLoadingMore && !uiState.isRefreshing
             } else {
                 false
             }
-        }.collect { shouldLoadMore ->
-            if (shouldLoadMore) {
-                viewModel.loadMore()
-            }
         }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { viewModel.loadMore() }
     }
-
-    // reverseLayout = false: 检测是否在底部（最新消息）
+    
     LaunchedEffect(listState) {
         snapshotFlow {
             val layoutInfo = listState.layoutInfo
@@ -377,65 +373,36 @@ fun MessageDetailScreen(
             } else {
                 true
             }
-        }.collect { isAtBottom ->
-            showScrollToBottom = !isAtBottom
-            if (isAtBottom) {
-                unreadCount = 0
-            }
         }
-    }
-
-    LaunchedEffect(uiState.messages) {
-        val newMessages = uiState.messages
-        val oldMessages = previousMessages
-
-        // 数量未变 → 可能是编辑/撤回，不处理滚动和未读
-        if (newMessages.size == oldMessages.size) {
-            previousMessages = newMessages
-            return@LaunchedEffect
-        }
-
-        val addedCount = newMessages.size - oldMessages.size
-        if (addedCount == 0) {
-            previousMessages = newMessages
-            return@LaunchedEffect
-        }
-
-        // 判断是加载更多（旧消息添加在开头）还是新消息（添加在末尾）
-        // 如果第一条旧消息在新列表中的索引等于新增消息数量，说明是加载更多
-        val firstOldMsgId = oldMessages.firstOrNull()?.msgId
-        val firstOldMsgNewIndex = newMessages.indexOfFirst { it.msgId == firstOldMsgId }
-        
-        if (firstOldMsgNewIndex == addedCount && addedCount > 0) {
-            // 加载更多：旧消息添加在开头，需要调整滚动位置
-            val currentFirstVisibleItem = listState.firstVisibleItemIndex
-            val currentScrollOffset = listState.firstVisibleItemScrollOffset
-            // 新的滚动位置 = 原位置 + 新增的消息数量
-            coroutineScope.launch {
-                listState.scrollToItem(currentFirstVisibleItem + addedCount, currentScrollOffset)
-            }
-        } else if (addedCount > 0) {
-            // 新消息添加在末尾
-            val layoutInfo = listState.layoutInfo
-            val visibleItems = layoutInfo.visibleItemsInfo
-            val totalItems = layoutInfo.totalItemsCount
-            val isAtBottom = visibleItems.isNotEmpty() && visibleItems.last().index >= totalItems - 1
-
-            if (isAtBottom) {
-                // 如果在底部，自动滚动到最新消息
-                coroutineScope.launch {
-                    listState.animateScrollToItem(newMessages.size - 1)
+            .distinctUntilChanged()
+            .collect { atBottom ->
+                showScrollToBottom = !atBottom
+                if (atBottom) {
+                    unreadCount = 0
+                    if (uiState.messages.isNotEmpty()) {
+                        firstMessageId = uiState.messages.first().effectiveMsgId
+                    }
                 }
-                unreadCount = 0
+            }
+    }
+    
+    LaunchedEffect(uiState.messages) {
+        if (uiState.messages.isEmpty()) return@LaunchedEffect
+        
+        val currentFirstId = uiState.messages.first().effectiveMsgId
+        
+        if (firstMessageId != null && currentFirstId != firstMessageId) {
+            if (showScrollToBottom) {
+                unreadCount += 1
             } else {
-                // 不在底部，增加未读计数
-                unreadCount += addedCount
+                listState.scrollToItem(0)
+                unreadCount = 0
             }
         }
-
-        previousMessages = newMessages
+        
+        firstMessageId = currentFirstId
     }
-
+    
     val scrollToBottom: () -> Unit = {
         coroutineScope.launch {
             // 滚动到最后一个item（最新消息）
@@ -444,6 +411,9 @@ fun MessageDetailScreen(
                 listState.animateScrollToItem(lastIndex)
             }
             unreadCount = 0
+            if (uiState.messages.isNotEmpty()) {
+                firstMessageId = uiState.messages.first().effectiveMsgId
+            }
         }
     }
 
@@ -457,7 +427,7 @@ fun MessageDetailScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (uiState.chatType == 1 && !uiState.canSend) {
+        if (uiState.chatType == 1 && uiState.relationship != "friend") {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.errorContainer,
@@ -514,21 +484,23 @@ fun MessageDetailScreen(
                     reverseLayout = false,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(uiState.messages, key = { it.msgId }) { message ->
+                    items(uiState.messages, key = { it.effectiveMsgId }) { message ->
                         MessageBubble(
                             message = message,
-                            onRecall = { viewModel.showRecallDialog(message.msgId) },
+                            onRecall = { viewModel.showRecallDialog(message.effectiveMsgId) },
                             onEdit = { viewModel.showEditDialog(message) },
-                            clipboard = clipboard,
-                            context = context,
                             onImageClick = { urls, index ->
                                 imageViewerUrls = urls
                                 imageViewerInitialPage = index
                                 showImageViewer = true
-                            }
+                            },
+                            clipboard = clipboard,
+                            context = context,
+                            onReply = { viewModel.setReplyTo(message) },
+                            isAdmin = uiState.isAdmin
                         )
                     }
-
+                    
                     if (uiState.isLoadingMore) {
                         item {
                             Box(
@@ -591,22 +563,65 @@ fun MessageDetailScreen(
                 }
             }
         } else {
-            MessageInput(
-                inputText = uiState.inputText,
-                selectedImages = uiState.selectedImages,
-                isMarkdown = uiState.isMarkdown,
-                onTextChange = { viewModel.updateInputText(it) },
-                onSendClick = {
-                    viewModel.sendMessage()
-                    coroutineScope.launch {
-                        listState.animateScrollToItem(0)
+            Column {
+                replyTo?.let { repliedMessage ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(32.dp)
+                                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = repliedMessage.displayName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if(repliedMessage.content.isEmpty()) "消息" else repliedMessage.content,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.clearReplyTo() },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "取消引用", modifier = Modifier.size(16.dp))
+                            }
+                        }
                     }
-                },
-                onAddImageClick = { imagePicker.launch("image/*") },
-                onRemoveImage = { viewModel.removeImage(it) },
-                onToggleMarkdown = { viewModel.toggleMarkdown() },
-                innerPadding = innerPadding,
-            )
+                }
+            
+                MessageInput(
+                    inputText = uiState.inputText,
+                    selectedImages = uiState.selectedImages,
+                    isMarkdown = uiState.isMarkdown,
+                    onTextChange = { viewModel.updateInputText(it) },
+                    onSendClick = {
+                        viewModel.sendMessage()
+                    },
+                    onAddImageClick = { imagePicker.launch("image/*") },
+                    onRemoveImage = { viewModel.removeImage(it) },
+                    onToggleMarkdown = { viewModel.toggleMarkdown() },
+                    innerPadding = innerPadding,
+                )
+            }
         }
     }
 
@@ -637,7 +652,8 @@ fun MessageDetailScreen(
             state = editDialog,
             onDismiss = { viewModel.hideEditDialog() },
             onContentChange = { viewModel.updateEditContent(it) },
-            onSave = { viewModel.editMessage() }
+            onSave = { viewModel.editMessage() },
+            onToggleMarkdown = { viewModel.toggleEditMarkdown() }
         )
     }
 }
@@ -714,25 +730,27 @@ fun MessageBubble(
     message: Message,
     onRecall: () -> Unit,
     onEdit: () -> Unit,
-    onImageClick: (List<String>, Int) -> Unit
+    onImageClick: (List<String>, Int) -> Unit,
+    onReply: () -> Unit,
+    isAdmin: Boolean = false
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val isMine = message.direction == "right"
+    val isMine = message.isMine || message.direction == "right"
     val isRecalledMessage = message.msgDeleteTime != null
     val isSystemMessage = message.isSystem
-    
-    // 格式化时间
-    val timestampDisplay = remember(message.sendTime) {
-        try {
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            sdf.format(Date(message.sendTime))
-        } catch (e: Exception) {
-            ""
+
+    val timestampDisplay = message.timestampDisplay
+        ?: message.sendTimeDisplay
+        ?: remember(message.sendTime) {
+            try {
+                val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+                sdf.format(Date(message.sendTime))
+            } catch (_: Exception) {
+                ""
+            }
         }
-    }
 
     if (isRecalledMessage) {
-        // 撤回消息
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -746,14 +764,13 @@ fun MessageBubble(
                 modifier = Modifier.widthIn(max = 250.dp)
             ) {
                 Text(
-                    text = "消息已撤回",
+                    text = message.recallHint ?: "消息已撤回",
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
         }
     } else if (isSystemMessage) {
-        // 系统消息
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -774,51 +791,35 @@ fun MessageBubble(
             }
         }
     } else {
-        // 普通消息：左右排列
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {
+
+                    },
+                    onLongClick = {
+                        showMenu = true
+                    }
+                )
                 .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.Bottom,
             horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start
         ) {
             if (!isMine) {
                 AsyncImage(
-                    model = message.sender.avatarUrl,
+                    model = message.displayAvatar,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 250.dp)
-                    .combinedClickable(
-                        onClick = {
-
-                        },
-                        onLongClick = {
-                            val hasContent = message.content.isNotBlank()
-                            val canRecall = isMine && message.msgDeleteTime == null
-                            if (hasContent || canRecall) {
-                                showMenu = true
-                            }
-                        }
-                    )
-            ) {
+            Box(modifier = Modifier.weight(1f, fill = false)) {
                 Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start) {
-                    if (!isMine) {
-                        Text(
-                            text = message.sender.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 2.dp)
-                        )
-                    }
-                    
                     Card(
                         shape = RoundedCornerShape(
                             topStart = 16.dp,
@@ -834,14 +835,100 @@ fun MessageBubble(
                         )
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
-                            if (message.content.isNotBlank()) {
+                            if (!isMine) {
                                 Text(
-                                    text = message.content,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    text = message.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 2.dp)
                                 )
                             }
-
+                    
+                            if (message.content.isNotBlank()) {
+                                if (message.isMarkdown) {
+                                    MarkdownRenderer.Render(
+                                        content = message.content
+                                    )
+                                } else {
+                                    Text(
+                                        text = message.content,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                    
+                            if (message.images.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                message.images.forEachIndexed { index, imageUrl ->
+                                    AsyncImage(
+                                        model = imageUrl,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.FillWidth,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { onImageClick(message.images, index) }
+                                    )
+                                    if (index < message.images.size - 1) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                    }
+                                }
+                            }
+                            
+                            if (message.quoteMsgInfo != null) {
+                                val ref = message.quoteMsgInfo
+                                Surface(
+                                    modifier = Modifier
+                                        .padding(bottom = 4.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(3.dp)
+                                                .height(32.dp)
+                                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = ref.senderUsername,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            if (ref.content.isNotBlank()) {
+                                                Text(
+                                                    text = ref.content,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (ref.images.isNotEmpty()) {
+                                                AsyncImage(
+                                                    model = ref.images.first(),
+                                                    contentDescription = null,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(100.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .padding(top = 4.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                    
                             Row(
                                 modifier = Modifier.align(if (isMine) Alignment.End else Alignment.Start)
                             ) {
@@ -850,7 +937,6 @@ fun MessageBubble(
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-
                                 if (message.editTime != null) {
                                     Text(
                                         text = "已编辑",
@@ -888,8 +974,19 @@ fun MessageBubble(
                             }
                         )
                     }
-
-                    if (isMine && message.msgDeleteTime == null) {
+                    
+                    DropdownMenuItem(
+                        text = { Text("引用") },
+                        onClick = {
+                            showMenu = false
+                            onReply()
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.FormatQuote, null, Modifier.size(18.dp))
+                        }
+                    )
+                    
+                    if (isMine || isAdmin) {
                         DropdownMenuItem(
                             text = { Text("撤回") },
                             onClick = {
@@ -897,14 +994,12 @@ fun MessageBubble(
                                 onRecall()
                             },
                             leadingIcon = {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Undo,
-                                    null,
-                                    Modifier.size(18.dp)
-                                )
+                                Icon(Icons.AutoMirrored.Filled.Undo, null, Modifier.size(18.dp))
                             }
                         )
-                        
+                    }
+
+                    if (isMine) {
                         if (message.content.isNotBlank()) {
                             DropdownMenuItem(
                                 text = { Text("编辑") },
@@ -928,11 +1023,11 @@ fun MessageBubble(
             if (isMine) {
                 Spacer(modifier = Modifier.width(8.dp))
                 AsyncImage(
-                    model = message.sender.avatarUrl,
+                    model = message.displayAvatar,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                 )
             }
@@ -1027,12 +1122,22 @@ fun MessageInput(
 
                 IconButton(
                     onClick = onToggleMarkdown,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(40.dp),
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = if (isMarkdown)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            Color.Transparent,
+                        contentColor = if (isMarkdown)
+                            MaterialTheme.colorScheme.onPrimary
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 ) {
                     Icon(
-                        if (isMarkdown) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        painter = painterResource(R.drawable.markdown),
                         contentDescription = "Markdown模式",
-                        tint = if (isMarkdown) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
@@ -1066,23 +1171,14 @@ fun EditMessageDialog(
     state: EditDialogState,
     onDismiss: () -> Unit,
     onContentChange: (String) -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    onToggleMarkdown: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "编辑消息",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑消息") },
+        text = {
+            Column {
                 OutlinedTextField(
                     value = state.newContent,
                     onValueChange = onContentChange,
@@ -1090,22 +1186,34 @@ fun EditMessageDialog(
                     label = { Text("新内容") },
                     minLines = 3
                 )
-
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.End
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = onSave) {
-                        Text("保存")
-                    }
+                    Text("Markdown")
+                    Switch(
+                        checked = state.isMarkdown,
+                        onCheckedChange = { onToggleMarkdown() },
+                        thumbContent = {
+                            Icon(
+                                imageVector = if (state.isMarkdown) Icons.Default.Check else Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize),
+                                tint = if (state.isMarkdown) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                        }
+                    )
                 }
             }
+        },
+        confirmButton = {
+            Button(onClick = onSave) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
-    }
+    )
 }

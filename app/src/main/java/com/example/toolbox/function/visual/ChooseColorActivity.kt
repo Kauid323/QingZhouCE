@@ -14,8 +14,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,21 +30,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.Color as ComposeColor
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.toColorInt
-import com.example.toolbox.ui.theme.ToolBoxTheme
 import androidx.core.graphics.createBitmap
+import com.example.toolbox.ui.theme.ToolBoxTheme
 import androidx.core.graphics.set
 
 class ChooseColorActivity : ComponentActivity() {
@@ -71,38 +73,47 @@ fun ChooseColorScreen(modifier: Modifier = Modifier) {
     var blue by remember { mutableIntStateOf(255) }
     var alpha by remember { mutableIntStateOf(255) }
 
-    var rectSize by remember { mutableStateOf(IntSize(0, 0)) }
-
     var hue by remember { mutableFloatStateOf(0f) }
     var saturation by remember { mutableFloatStateOf(0f) }
     var value by remember { mutableFloatStateOf(1f) }
 
-    var hexColorA by remember { mutableStateOf("#FFFFFF") }
-    var hexColor = remember(red, green, blue, alpha) {
-        if (alpha == 255) {
-            hexColorA
-        } else {
-            "#%02X%02X%02X%02X".format(alpha, red, green, blue)
-        }
-    }
-    var rgbText by remember { mutableStateOf("RGB(255, 255, 255)") }
-    var argbText by remember { mutableStateOf("ARGB(255, 255, 255, 255)") }
-    var errorMessage by remember { mutableStateOf("") }
-
-    val gradientBitmap = remember(hue) {
-        val width = 256
-        val height = 256
-        val bitmap = createBitmap(width, height)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val s = x / (width - 1f)
-                val v = 1f - y / (height - 1f)
-                val color = AndroidColor.HSVToColor(floatArrayOf(hue, s, v))
-                bitmap[x, y] = color
+    // 预渲染HSV圆盘Bitmap（只渲染一次）
+    val hsvBitmap = remember {
+        val size = 512
+        val bitmap = createBitmap(size, size)
+        val centerX = size / 2f
+        val centerY = size / 2f
+        val maxRadius = size / 2f
+        
+        // 逐像素计算颜色
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                val dx = x - centerX
+                val dy = y - centerY
+                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                
+                if (distance <= maxRadius) {
+                    // 计算色相和饱和度
+                    var angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                    if (angle < 0) angle += 360f
+                    val sat = (distance / maxRadius).coerceIn(0f, 1f)
+                    
+                    // HSV转RGB
+                    val color = AndroidColor.HSVToColor(floatArrayOf(angle, sat, 1f))
+                    bitmap[x, y] = color
+                } else {
+                    bitmap[x, y] = 0
+                }
             }
         }
         bitmap
     }
+
+    var hexColorA by remember { mutableStateOf("#FFFFFF") }
+    var hexColor by remember { mutableStateOf("#FFFFFF") }
+    var rgbText by remember { mutableStateOf("RGB(255, 255, 255)") }
+    var argbText by remember { mutableStateOf("ARGB(255, 255, 255, 255)") }
+    var errorMessage by remember { mutableStateOf("") }
 
     val hsv = FloatArray(3)
     AndroidColor.RGBToHSV(255, 255, 255, hsv)
@@ -127,6 +138,7 @@ fun ChooseColorScreen(modifier: Modifier = Modifier) {
         value = newHsv[2]
 
         hexColorA = String.format("#%02X%02X%02X", red, green, blue)
+        hexColor = if (alpha == 255) hexColorA else String.format("#%02X%02X%02X%02X", alpha, red, green, blue)
         rgbText = "RGB($red, $green, $blue)"
         argbText = "ARGB($alpha, $red, $green, $blue)"
     }
@@ -143,6 +155,7 @@ fun ChooseColorScreen(modifier: Modifier = Modifier) {
         blue = AndroidColor.blue(rgb)
 
         hexColorA = String.format("#%02X%02X%02X", red, green, blue)
+        hexColor = if (alpha == 255) hexColorA else String.format("#%02X%02X%02X%02X", alpha, red, green, blue)
         rgbText = "RGB($red, $green, $blue)"
         argbText = "ARGB($alpha, $red, $green, $blue)"
     }
@@ -228,129 +241,118 @@ fun ChooseColorScreen(modifier: Modifier = Modifier) {
                 }
             }
 
-            Card {
-                Row(
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(250.dp)
                         .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    Text("HSV 圆盘选择", style = MaterialTheme.typography.titleMedium)
+                    
+                    // HSV 圆盘
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outline,
-                                RoundedCornerShape(8.dp)
-                            )
-                            .onGloballyPositioned { coordinates ->
-                                rectSize = coordinates.size
-                            }
-                            .pointerInput(rectSize) {
-                                detectDragGestures(
-                                    onDrag = { change, _ ->
-                                        val pos = change.position
-                                        if (rectSize.width > 0 && rectSize.height > 0) {
-                                            val newSaturation =
-                                                (pos.x / rectSize.width).coerceIn(0f, 1f)
-                                            val newValue =
-                                                1f - (pos.y / rectSize.height).coerceIn(0f, 1f)
-                                            updateFromHsv(hue, newSaturation, newValue, alpha)
-                                        }
-                                        change.consume()
-                                    }
-                                )
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, _ ->
+                                    val size = this.size
+                                    val center = Offset(size.width / 2f, size.height / 2f)
+                                    val offset = change.position - center
+                                    
+                                    // 计算角度和距离
+                                    val angle = Math.toDegrees(
+                                        kotlin.math.atan2(offset.y.toDouble(), offset.x.toDouble())
+                                    ).toFloat()
+                                    val distance = kotlin.math.sqrt(
+                                        offset.x * offset.x + offset.y * offset.y
+                                    )
+                                    val maxRadius = kotlin.math.min(size.width, size.height) / 2f
+                                    
+                                    // 更新色相（角度）
+                                    val newHue = (angle + 360) % 360
+                                    
+                                    // 更新饱和度（距离中心的距离）
+                                    val newSaturation = (distance / maxRadius).coerceIn(0f, 1f)
+                                    
+                                    updateFromHsv(newHue, newSaturation, value, alpha)
+                                    change.consume()
+                                }
                             }
                     ) {
                         Canvas(modifier = Modifier.matchParentSize()) {
-                            val w = size.width
-                            val h = size.height
-                            if (w <= 0 || h <= 0) return@Canvas
+                            val canvasWidth = size.width
+                            val canvasHeight = size.height
+                            val diameter = kotlin.math.min(canvasWidth, canvasHeight)
+                            val radius = diameter / 2f
+                            val center = Offset(canvasWidth / 2f, canvasHeight / 2f)
 
-                            drawImage(
-                                image = gradientBitmap.asImageBitmap(),
-                                dstSize = IntSize(w.toInt(), h.toInt())
-                            )
-
-                            val indicatorX = saturation * w
-                            val indicatorY = (1f - value) * h
-                            drawCircle(
-                                color = ComposeColor.White,
-                                radius = 8f,
-                                center = Offset(indicatorX, indicatorY),
-                                style = Stroke(width = 2f)
-                            )
-                            drawCircle(
-                                color = ComposeColor.Black,
-                                radius = 6f,
-                                center = Offset(indicatorX, indicatorY),
-                                style = Stroke(width = 2f)
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(40.dp)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outline,
-                                RoundedCornerShape(8.dp)
-                            )
-                            .pointerInput(Unit) { // key 设为 Unit，因为不需要重置手势
-                                detectDragGestures(
-                                    onDrag = { change, _ ->
-                                        val pos = change.position
-                                        val size = this.size
-                                        // 色相 = 360 * (y / height)
-                                        val newHue = (pos.y / size.height).coerceIn(0f, 1f) * 360f
-                                        updateFromHsv(newHue, saturation, value, alpha)
-                                        change.consume()
-                                    }
-                                )
-                            }
-                    ) {
-                        Canvas(modifier = Modifier.matchParentSize()) {
-                            val w = size.width
-                            val h = size.height
-                            val colors = (0..360 step 10).map { angle ->
-                                ComposeColor(
-                                    AndroidColor.HSVToColor(
-                                        floatArrayOf(
-                                            angle.toFloat(),
-                                            1f,
-                                            1f
-                                        )
+                            val clipPath = androidx.compose.ui.graphics.Path().apply {
+                                addOval(
+                                    androidx.compose.ui.geometry.Rect(
+                                        center.x - radius,
+                                        center.y - radius,
+                                        center.x + radius,
+                                        center.y + radius
                                     )
                                 )
                             }
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = colors,
-                                    startY = 0f,
-                                    endY = h
-                                ),
-                                size = size
+
+                            clipPath(clipPath) {
+                                drawImage(
+                                    image = hsvBitmap.asImageBitmap(),
+                                    dstOffset = IntOffset(
+                                        (center.x - radius).toInt(),
+                                        (center.y - radius).toInt()
+                                    ),
+                                    dstSize = IntSize(diameter.toInt(), diameter.toInt())
+                                )
+                            }
+
+                            // 在clipPath外绘制黑色遮罩，确保完全重叠
+                            if (value < 1f) {
+                                drawCircle(
+                                    color = ComposeColor.Black.copy(alpha = 1f - value),
+                                    center = center,
+                                    radius = radius
+                                )
+                            }
+
+                            val indicatorAngle = Math.toRadians(hue.toDouble()).toFloat()
+                            val indicatorDistance = saturation * radius
+                            val indicatorPos = center + Offset(
+                                kotlin.math.cos(indicatorAngle) * indicatorDistance,
+                                kotlin.math.sin(indicatorAngle) * indicatorDistance
                             )
-                            val indicatorY = (hue / 360f) * h
-                            drawRect(
+
+                            drawCircle(
                                 color = ComposeColor.White,
-                                topLeft = Offset(0f, indicatorY - 4f),
-                                size = androidx.compose.ui.geometry.Size(w, 8f),
-                                style = Stroke(width = 2f)
+                                radius = 10f,
+                                center = indicatorPos
                             )
-                            drawRect(
+                            drawCircle(
                                 color = ComposeColor.Black,
-                                topLeft = Offset(0f, indicatorY - 3f),
-                                size = androidx.compose.ui.geometry.Size(w, 6f),
-                                style = Stroke(width = 2f)
+                                radius = 8f,
+                                center = indicatorPos
                             )
                         }
+                    }
+                    
+                    // 明度滑块
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("明度: ${(value * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                        Slider(
+                            value = value,
+                            onValueChange = { newValue ->
+                                updateFromHsv(hue, saturation, newValue, alpha)
+                            },
+                            valueRange = 0f..1f
+                        )
                     }
                 }
             }
@@ -448,13 +450,29 @@ fun ChooseColorScreen(modifier: Modifier = Modifier) {
                     OutlinedTextField(
                         value = hexColor,
                         onValueChange = {
+                            // 只更新文本，不立即验证
                             hexColor = it
-                            parseHexColor(it)
+                            errorMessage = "" // 清除错误提示
                         },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("例如: #FF5733") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                        singleLine = true
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Ascii,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                // 按回车时才验证
+                                parseHexColor(hexColor)
+                            }
+                        ),
+                        singleLine = true,
+                        isError = errorMessage.isNotEmpty(),
+                        supportingText = {
+                            if (errorMessage.isNotEmpty()) {
+                                Text(errorMessage, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     )
                 }
             }

@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -29,14 +31,18 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.toolbox.function.yunhu.yhbotmaker.runtime.RunBotActivity
+import com.example.toolbox.function.yunhu.yhbotmaker.runtime.BotWebSocketManagerSingleton
 import com.example.toolbox.ui.theme.ToolBoxTheme
 import java.io.File
 import java.io.FileOutputStream
@@ -47,8 +53,6 @@ import kotlinx.serialization.SerializationException
 
 @Serializable
 data class Bot(
-    val id: String,
-    val type: String,
     val token: String,
     val name: String,
     var index: Int = 0
@@ -75,11 +79,6 @@ class BotModel(application: Application) : AndroidViewModel(application) {
         prefs.edit { putString("botlist", AppJson.json.encodeToString(bots)) }
     }
 
-    fun isStopped(index: Int) = prefs.getBoolean("stop_$index", false)
-    fun setStopped(index: Int, stopped: Boolean) {
-        prefs.edit { putBoolean("stop_$index", stopped) }
-    }
-
     fun avatarPath(index: Int) = prefs.getString("avatar_$index", null)
     fun setAvatar(index: Int, path: String?) {
         prefs.edit {
@@ -87,35 +86,32 @@ class BotModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun add(bot: Bot) {
+    fun add(bot: Bot): Boolean {
+        // 检查是否已存在同名机器人
+        if (bots.any { it.name == bot.name }) {
+            return false
+        }
         bots = bots + bot.copy(index = bots.size + 1)
         save()
+        return true
     }
-
-    fun update(pos: Int, bot: Bot) {
+    
+    fun update(pos: Int, bot: Bot): Boolean {
+        // 检查是否已存在同名机器人（排除当前编辑的）
+        if (bots.any { it.index != pos + 1 && it.name == bot.name }) {
+            return false
+        }
         bots = bots.toMutableList().apply { this[pos] = bot.copy(index = pos + 1) }
         save()
+        return true
     }
 
     fun delete(pos: Int) {
         bots = bots.toMutableList().apply { removeAt(pos) }
         save()
         (pos + 1).let { idx ->
-            listOf("stop_$idx", "avatar_$idx", "chelper_$idx", "code_$idx", "code-start_$idx", "shilv_$idx")
-                .forEach { key -> prefs.edit { remove(key) } }
-        }
-    }
-
-    fun duplicate(pos: Int) {
-        val original = bots[pos]
-        bots = bots + original.copy(index = bots.size + 1)
-        save()
-        (pos + 1).let { from ->
-            (bots.size).let { to ->
-                prefs.getString("avatar_$from", null)?.let { path ->
-                    prefs.edit { putString("avatar_$to", path) }
-                }
-            }
+            listOf("avatar_$idx", "chelper_$idx", "code_$idx", "code-start_$idx")
+               .forEach { key -> prefs.edit { remove(key) } }
         }
     }
 
@@ -147,8 +143,6 @@ fun BotManagerScreen(
         onBotDetail ?: { bot ->
             context.startActivity(Intent(context, RunBotActivity::class.java).apply {
                 putExtra("token", bot.token)
-                putExtra("id", bot.id)
-                putExtra("type", bot.type)
                 putExtra("name", bot.name)
                 putExtra("index", bot.index)
             })
@@ -185,17 +179,13 @@ fun BotManagerScreen(
                 ) {
                     itemsIndexed(
                         items = model.bots,
-                        key = { index, bot -> "${index}_${bot.id}_${bot.index}_$refreshKey" }
+                        key = { index, bot -> "${index}_${bot.index}_$refreshKey" }
                     ) { pos, bot ->
                         BotCard(
                             bot = bot,
-                            pos = pos,
-                            isStopped = model.isStopped(pos + 1),
                             avatar = model.avatarPath(pos + 1),
                             onClick = { model.lastIndex = pos; navigateToBotDetail(bot) },
-                            onStop = { model.setStopped(pos + 1, it) },
                             onEdit = { editPos = pos },
-                            onDuplicate = { model.duplicate(pos) },
                             onDelete = { model.delete(pos) }
                         )
                     }
@@ -204,90 +194,116 @@ fun BotManagerScreen(
         }
     }
 
-    // 创建对话框
     if (showCreate) {
         EditDialog(
             initial = null,
+            currentAvatar = null,
             onDismiss = { showCreate = false },
-            onConfirm = { bot, avatarUri ->
-                model.add(bot)
-                if (avatarUri != null) {
-                    saveImage(context, avatarUri)?.let { path ->
-                        model.setAvatar(model.bots.size, path)
+            onConfirm = { bot, avatarUri, clearAvatar ->
+                val success = model.add(bot)
+                if (success) {
+                    if (avatarUri != null) {
+                        saveImage(context, avatarUri)?.let { path ->
+                            model.setAvatar(model.bots.size, path)
+                        }
                     }
+                    showCreate = false
+                    refreshKey++
+                } else {
+                    toast(context, "机器人名称已存在")
                 }
-                showCreate = false
-                refreshKey++
             }
         )
     }
 
-    // 编辑对话框
     if (editPos >= 0) {
+        val bot = model.bots[editPos]
         EditDialog(
-            initial = model.bots[editPos],
+            initial = bot,
             currentAvatar = model.avatarPath(editPos + 1),
             onDismiss = { editPos = -1 },
-            onConfirm = { bot, avatarUri ->
-                model.update(editPos, bot)
-                if (avatarUri != null) {
-                    saveImage(context, avatarUri)?.let { path ->
-                        model.setAvatar(editPos + 1, path)
+            onConfirm = { newBot, avatarUri, clearAvatar ->
+                val success = model.update(editPos, newBot)
+                if (success) {
+                    when {
+                        clearAvatar -> {
+                            // 清除头像
+                            model.setAvatar(editPos + 1, null)
+                        }
+                        avatarUri != null -> {
+                            // 新头像
+                            saveImage(context, avatarUri)?.let { path ->
+                                model.setAvatar(editPos + 1, path)
+                            }
+                        }
+                        // else: 不修改头像
                     }
-                } else if (model.avatarPath(editPos + 1) != null) {
-                    model.setAvatar(editPos + 1, null)
+                    editPos = -1
+                    refreshKey++
+                } else {
+                    toast(context, "机器人名称已存在")
                 }
-                editPos = -1
-                refreshKey++
             }
         )
     }
 }
 
-// ==================== 列表卡片 ====================
 @Composable
 fun BotCard(
     bot: Bot,
-    pos: Int,
-    isStopped: Boolean,
     avatar: String?,
     onClick: () -> Unit,
-    onStop: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    onDuplicate: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    
+    val connectionState = BotWebSocketManagerSingleton.getConnectionState(bot.index)
+    val isConnected = connectionState?.collectAsState()?.value ?: false
 
     val bitmap = remember(avatar) {
         avatar?.takeIf { File(it).exists() }?.let { BitmapFactory.decodeFile(it) }
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                Card(shape = MaterialTheme.shapes.medium, modifier = Modifier.size(48.dp)) {
-                    if (bitmap != null) {
-                        Image(bitmap = bitmap.asImageBitmap(), null, Modifier.fillMaxSize())
-                    } else {
-                        Icon(Icons.Default.Person, null, Modifier.padding(8.dp))
-                    }
+            Box(modifier = Modifier.size(48.dp)) {
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().padding(8.dp)
+                    )
                 }
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = if (isStopped) Color.Gray else Color.Green),
-                    shape = MaterialTheme.shapes.extraSmall,
-                    modifier = Modifier.size(12.dp).align(Alignment.BottomEnd).padding(2.dp)
-                ) {}
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .align(Alignment.BottomEnd)
+                        .background(
+                            color = if (isConnected) Color.Green else Color.Gray,
+                            shape = CircleShape
+                        )
+                )
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(bot.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "对话：${bot.id} (${bot.type})",
+                    "Token: ${bot.token.take(10)}...",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -296,8 +312,6 @@ fun BotCard(
 
             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                 listOfNotNull(
-                    if (isStopped) "启动运行" to { onStop(false) } else "停止运行" to { onStop(true) },
-                    "复制此机器人" to onDuplicate,
                     "编辑" to onEdit,
                     "删除" to onDelete
                 ).forEach { (text, action) ->
@@ -311,23 +325,22 @@ fun BotCard(
     }
 }
 
-// ==================== 编辑对话框 ====================
 @Composable
 fun EditDialog(
     initial: Bot?,
     currentAvatar: String? = null,
     onDismiss: () -> Unit,
-    onConfirm: (Bot, Uri?) -> Unit
+    onConfirm: (Bot, Uri?, Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var token by remember { mutableStateOf(initial?.token ?: "") }
-    var id by remember { mutableStateOf(initial?.id ?: "") }
-    var type by remember { mutableStateOf(initial?.type ?: "user") }
     var avatarUri by remember { mutableStateOf<Uri?>(null) }
+    var clearAvatar by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    val bitmap = remember(avatarUri, currentAvatar) {
+    val bitmap = remember(avatarUri, currentAvatar, clearAvatar) {
         when {
+            clearAvatar -> null
             avatarUri != null -> {
                 try {
                     context.contentResolver.openInputStream(avatarUri!!)?.use {
@@ -345,7 +358,10 @@ fun EditDialog(
     }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { avatarUri = it }
+        uri?.let { 
+            avatarUri = it
+            clearAvatar = false
+        }
     }
 
     AlertDialog(
@@ -364,19 +380,36 @@ fun EditDialog(
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.size(64.dp)
                     ) {
-                        if (bitmap != null) {
-                            Image(bitmap = bitmap.asImageBitmap(), null, Modifier.fillMaxSize())
-                        } else {
-                            Icon(Icons.Default.Person, null, Modifier.padding(16.dp))
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Person,
+                                    null,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Button(onClick = { launcher.launch("image/*") }) {
                         Text("选择头像")
                     }
-                    if (avatarUri != null || currentAvatar != null) {
+                    if (currentAvatar != null || clearAvatar) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        OutlinedButton(onClick = { avatarUri = null }) {
+                        OutlinedButton(onClick = { 
+                            avatarUri = null
+                            clearAvatar = true
+                        }) {
                             Text("清除")
                         }
                     }
@@ -396,39 +429,16 @@ fun EditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = id,
-                    onValueChange = { id = it },
-                    label = { Text("目标ID") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("类型：")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    FilterChip(
-                        selected = type == "user",
-                        onClick = { type = "user" },
-                        label = { Text("user") }
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    FilterChip(
-                        selected = type == "group",
-                        onClick = { type = "group" },
-                        label = { Text("group") }
-                    )
-                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     when {
-                        name.isBlank() || token.isBlank() || id.isBlank() -> toast(context, "请填写完整")
-                        id.length < 7 -> toast(context, "非法ID")
+                        name.isBlank() || token.isBlank() -> toast(context, "请填写完整")
                         else -> {
-                            val bot = Bot(id, type, token, name)
-                            onConfirm(bot, avatarUri)
+                            val bot = Bot(token, name)
+                            onConfirm(bot, avatarUri, clearAvatar)
                         }
                     }
                 }
@@ -438,7 +448,6 @@ fun EditDialog(
     )
 }
 
-// ==================== 工具 ====================
 fun saveImage(context: Context, uri: Uri): String? = try {
     context.contentResolver.openInputStream(uri)?.use { input ->
         BitmapFactory.decodeStream(input)?.let { bmp ->
@@ -453,7 +462,6 @@ fun toast(context: Context, msg: String) {
     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
 }
 
-// ==================== Activity ====================
 class BotMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

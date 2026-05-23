@@ -29,7 +29,7 @@ class MessageViewModel(
     private val client = OkHttpClient()
     private var isWebSocketUpdate = false
     
-    private val messageObserver: (type: String, message: Message) -> Unit = { type, _ ->
+    private val messageObserver: (type: String, chatId: String, chatType: Int, message: Message) -> Unit = { type, _, _, _ ->
         when (type) {
             "new", "edit", "recall" -> {
                 isWebSocketUpdate = true
@@ -89,11 +89,8 @@ class MessageViewModel(
     }
 
     fun refresh() {
-        if (isWebSocketUpdate) {
-            isWebSocketUpdate = false
-            return
-        }
-
+        if (uiState.value.isRefreshing) return
+        isWebSocketUpdate = false
         loadFriends(page = 1, isRefresh = true)
     }
 
@@ -167,14 +164,14 @@ class MessageViewModel(
 
     fun connectWebSocket() {
         if (token.isNotBlank()) {
-            val manager = PrivateChatSocketManager.getInstance()
+            val manager = ChatSocketManager.getInstance()
             manager.addObserver(messageObserver)
             manager.connect(token)
         }
     }
 
     fun disconnectWebSocket() {
-        val manager = PrivateChatSocketManager.getInstance()
+        val manager = ChatSocketManager.getInstance()
         manager.removeObserver(messageObserver)
     }
 

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Web
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.edit
@@ -120,6 +121,7 @@ val functionData = listOf(
             FunctionItem("浏览器", "com.example.toolbox.webview.WebViewActivity", Icons.Outlined.Public, "blue"),
             FunctionItem("全屏时钟", "com.example.toolbox.function.daily.FullScreenClockActivity", Icons.Outlined.AccessTime, "green"),
             FunctionItem("秒表", "com.example.toolbox.function.daily.StopWatchActivity", Icons.Outlined.Timer, "orange"),
+            FunctionItem("WebSocket测试", "com.example.toolbox.function.daily.WebSocketTestActivity", Icons.Outlined.Web, "purple"),
             FunctionItem("BMI指数", "com.example.toolbox.function.daily.BMIActivity", Icons.Outlined.Percent, "yellow"),
             FunctionItem("随机抽选", "com.example.toolbox.function.daily.randomChoose.RandomChooseActivity", Icons.Default.Casino, "red"),
             FunctionItem("计分板", "com.example.toolbox.function.daily.MarkBoardActivity", Icons.Default.MarkunreadMailbox, "gray"),
@@ -130,7 +132,7 @@ val functionData = listOf(
         icon = Icons.Default.Style.asIcon,
         iconColorName = "green",
         functions = listOf(
-            FunctionItem("二维码生成", "com.example.toolbox.function.visual.QRCodeGeneratorActivity", Icons.Filled.QrCode, "purple"),
+            FunctionItem("条码生成", "com.example.toolbox.function.visual.BarcodeGeneratorActivity", Icons.Filled.QrCode, "purple"),
             FunctionItem("防OCR", "com.example.toolbox.function.visual.AntiOCRActivity", Icons.Outlined.HideImage, "blue"),
             FunctionItem("图片取色器", "com.example.toolbox.function.visual.ImageGetColorActivity", Icons.Outlined.Image, "yellow"),
             FunctionItem("MD3 配色参考", "com.example.toolbox.function.visual.MDColorSchemeActivity", Icons.Outlined.Style, "green"),
@@ -145,12 +147,22 @@ val functionData = listOf(
         iconColorName = "orange",
         functions = listOf(
             FunctionItem("SHA256哈希", "com.example.toolbox.function.text.SHA256Activity", Icons.Outlined.TextFields, "blue"),
+            FunctionItem("MD5哈希", "com.example.toolbox.function.text.MD5Activity", Icons.Outlined.TextFields, "red"),
+            FunctionItem("时间戳转换", "com.example.toolbox.function.text.TimestampActivity", Icons.Outlined.AccessTime, "orange"),
             FunctionItem("进制转换", "com.example.toolbox.function.text.NumberBaseActivity", Icons.Outlined.TextFields, "green"),
             FunctionItem("特殊文本生成", "com.example.toolbox.function.text.SpecialTextActivity", Icons.Outlined.TextFields, "yellow"),
+            FunctionItem("UUID生成", "com.example.toolbox.function.text.UUIDGeneratorActivity", Icons.Outlined.Info, "blue"),
             FunctionItem("Base64编解码", "com.example.toolbox.function.text.Base64Activity", Icons.Outlined.TextFields, "orange"),
+            FunctionItem("HTML实体编解码", "com.example.toolbox.function.text.HTMLEntityActivity", Icons.Outlined.Code, "purple"),
+            FunctionItem("Unicode编解码", "com.example.toolbox.function.text.UnicodeActivity", Icons.Outlined.TextFields, "purple"),
             FunctionItem("摩斯密码", "com.example.toolbox.function.text.MorseCodeActivity", Icons.Outlined.TextFields, "gray"),
             FunctionItem("RC4加解密", "com.example.toolbox.function.text.Rc4Activity", Icons.Outlined.Key, "red"),
             FunctionItem("AES加解密", "com.example.toolbox.function.text.AESActivity", Icons.Outlined.Key, "blue"),
+            FunctionItem("URL编解码", "com.example.toolbox.function.text.URLActivity", Icons.Outlined.Public, "green"),
+            FunctionItem("JSON格式化", "com.example.toolbox.function.text.JSONFormatActivity", Icons.Outlined.Code, "yellow"),
+            FunctionItem("JWT解析", "com.example.toolbox.function.text.JWTParseActivity", Icons.Outlined.Key, "gray"),
+            FunctionItem("正则测试", "com.example.toolbox.function.text.RegexTesterActivity", Icons.Outlined.Code, "green"),
+            FunctionItem("文本对比", "com.example.toolbox.function.text.TextDiffActivity", Icons.Outlined.TextFields, "red"),
         )
     ),
     FunctionCategory(

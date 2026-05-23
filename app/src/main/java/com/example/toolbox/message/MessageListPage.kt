@@ -29,6 +29,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.GroupAdd
@@ -47,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -77,7 +80,6 @@ import com.example.toolbox.data.Friend
 import com.example.toolbox.mine.notice.FriendRequestActivity
 import com.example.toolbox.mine.notice.snapshotFlow
 import com.example.toolbox.utils.UserAvatar
-import com.example.toolbox.community.uploadImage
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -96,6 +98,9 @@ fun MessageScreen(
     val groupViewModel: GroupViewModel = viewModel(
         factory = GroupViewModelFactory(token)
     )
+    
+    val wsManager = remember { ChatSocketManager.getInstance() }
+    val isAuth by wsManager.authState.collectAsState()
 
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -130,12 +135,6 @@ fun MessageScreen(
         viewModel.connectWebSocket()
     }
 
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.disconnectWebSocket()
-        }
-    }
-
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
             .collect { lastVisibleIndex ->
@@ -166,7 +165,7 @@ fun MessageScreen(
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
-                title = { Text("会话") },
+                title = { Text(if (isAuth) "会话" else "连接中...") },
                 navigationIcon = {
                     IconButton(onClick = { onMenuClick() }) {
                         Icon(Icons.Default.Menu, contentDescription = "菜单")
@@ -176,7 +175,7 @@ fun MessageScreen(
                     if (token != "null") {
                         Box {
                             IconButton(onClick = { groupViewModel.showDropdownMenu() }) {
-                                Icon(Icons.Default.PersonAdd, contentDescription = "添加")
+                                Icon(Icons.Default.Add, contentDescription = "添加")
                             }
                             
                             DropdownMenu(
@@ -386,32 +385,7 @@ fun CreateGroupDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = onNameChange,
-                        label = { Text("群聊名称") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        IconButton(onClick = onSelectAvatar) {
-                            Icon(Icons.Default.Add, contentDescription = "选择头像")
-                        }
-                        Text(
-                            "可选",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                
-                // 显示已选择的头像
-                if (avatarPath != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    if (avatarPath != null) {
                         Image(
                             painter = rememberAsyncImagePainter(avatarPath),
                             contentDescription = "群头像预览",
@@ -420,13 +394,21 @@ fun CreateGroupDialog(
                                 .size(40.dp)
                                 .clip(CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "已选择头像",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    } else {
+                        IconButton(onClick = onSelectAvatar) {
+                            Icon(Icons.Default.Add, contentDescription = "选择头像")
+                        }
                     }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = onNameChange,
+                        label = { Text("群聊名称") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
                 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -451,7 +433,19 @@ fun CreateGroupDialog(
                     Text("私有群")
                     Switch(
                         checked = isPrivate,
-                        onCheckedChange = onPrivateChange
+                        onCheckedChange = onPrivateChange,
+                        thumbContent = {
+                            Icon(
+                                imageVector = if (isPrivate) Icons.Default.Check else Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize),
+                                tint = if (isPrivate) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHighest
+                                }
+                            )
+                        }
                     )
                 }
             }
@@ -487,7 +481,6 @@ fun FriendItem(friend: Friend) {
             .fillMaxWidth()
             .clickable {
                 val intent = Intent(context, MessageDetailActivity::class.java)
-                // 根据类型设置不同的参数
                 if (friend.type == "group") {
                     intent.putExtra("chat_type", 2)
                     intent.putExtra("chat_id", friend.id)
@@ -531,22 +524,26 @@ fun FriendItem(friend: Friend) {
                 )
                 if (friend.title.isNotBlank()) {
                     Spacer(modifier = Modifier.width(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(14.dp),
-                            contentDescription = null,
-                            imageVector = Icons.Default.CheckCircle,
-                            tint = when (friend.titleStatus) {
-                                1 -> MaterialTheme.colorScheme.error
-                                2 -> MaterialTheme.colorScheme.tertiary
-                                4 -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                    }
+                    Icon(
+                        modifier = Modifier.size(14.dp),
+                        contentDescription = null,
+                        imageVector = Icons.Default.CheckCircle,
+                        tint = when (friend.titleStatus) {
+                            1 -> MaterialTheme.colorScheme.error
+                            2 -> MaterialTheme.colorScheme.tertiary
+                            4 -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                if (friend.type == "group") {
+                    Icon(
+                        imageVector = Icons.Default.Group,
+                        contentDescription = "群聊",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

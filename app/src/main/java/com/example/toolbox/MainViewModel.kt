@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 class MainViewModel : ViewModel() {
     private val _showSidebar = MutableStateFlow(true)
     val showSidebar: StateFlow<Boolean> = _showSidebar.asStateFlow()
-
+    
     private val _userInfo = MutableStateFlow(UserInfo())
     val userInfo: StateFlow<UserInfo> = _userInfo
 
