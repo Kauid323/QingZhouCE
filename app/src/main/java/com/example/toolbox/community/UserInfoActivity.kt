@@ -538,8 +538,9 @@ private fun rememberCollapsingAvatarTopBarMeasurePolicy(
                     titlePlaceable[LastBaseline]
                 } else 0
 
+            val subtitleHeight = subtitlePlaceable?.height ?: 0
             val subtitleExpandingOffset = subtitlePlaceable?.run {
-                lerpDpToInt(0.dp, subtitlePlaceable.height, LinearOutSlowInEasing.transform(collapsedFraction))
+                lerpDpToInt(0.dp, subtitleHeight, LinearOutSlowInEasing.transform(collapsedFraction))
             } ?: 0
 
             val extraContentHeight = extraContentPlaceable?.run {
@@ -593,8 +594,9 @@ private fun rememberCollapsingAvatarTopBarMeasurePolicy(
                     titleX += ((constraints.maxWidth - end) - (titleX + titlePlaceable.width))
                 }
                 
+                val expandedTitleBlockHeight = titlePlaceable.height + subtitleHeight
                 val totalHeight = titlePlaceable.height + subtitleExpandingOffset
-                val expandedTitleY = avatarY + (avatarPlaceable!!.height - totalHeight) / 2
+                val expandedTitleY = avatarY + (avatarPlaceable!!.height - expandedTitleBlockHeight) / 2
                 val foldedTitleY = (collapsedHeight - titlePlaceable.height) / 2
                 val titleY = lerpInt(expandedTitleY, foldedTitleY, collapsedFraction)
                 
