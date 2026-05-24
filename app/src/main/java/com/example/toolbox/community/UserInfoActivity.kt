@@ -682,6 +682,84 @@ private fun Modifier.windowInsetsPadding(insets: WindowInsets): Modifier = this.
     Modifier.padding(insets.asPaddingValues())
 )
 
+@Composable
+private fun UserInfoTopBarExtraContent(
+    info: UserInfo,
+    modifier: Modifier = Modifier,
+    onBioClick: (() -> Unit)? = null
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = if (info.bio.isNotEmpty()) info.bio else "这个用户很懒，没有简介~",
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = if (onBioClick != null) {
+                Modifier.clickable { onBioClick() }
+            } else {
+                Modifier
+            }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        modifier = Modifier.size(14.dp),
+                        painter = painterResource(getLevelIconRes(info.level.toString())),
+                        contentDescription = null
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Lv.${info.level}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MonetizationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "${info.gold}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(
     ExperimentalMaterial3Api::class,
     ExperimentalFoundationApi::class,
@@ -708,6 +786,7 @@ fun UserInfoScreen(userId: Int) {
     var showReportDialog by remember { mutableStateOf(false) }
     var reportReason by remember { mutableStateOf("") }
     var isMenuExpanded by remember { mutableStateOf(false) }
+    var showFullBioDialog by remember { mutableStateOf(false) }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -843,7 +922,7 @@ fun UserInfoScreen(userId: Int) {
 
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val collapsedTopBarHeightPx = with(density) { TopAppBarDefaults.TopAppBarExpandedHeight.roundToPx() }
-    var topBarHeightPx by remember { mutableIntStateOf(collapsedTopBarHeightPx) }
+    var topBarHeightPx by remember { mutableIntStateOf(0) }
     var totalTopBarHeightPx by remember { mutableIntStateOf(0) }
     val topBarHeight = with(density) { topBarHeightPx.toDp() }
     val totalTopHeight = if (totalTopBarHeightPx > 0) {
@@ -857,6 +936,16 @@ fun UserInfoScreen(userId: Int) {
     }
     
     Box(modifier = Modifier.fillMaxSize()) {
+        userInfo?.let { info ->
+            UserInfoTopBarExtraContent(
+                info = info,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .alpha(0f)
+                    .onSizeChanged { topBarHeightPx = it.height },
+            )
+        }
+
         userInfo?.backgroundUrl?.let { backgroundUrl ->
             Box(
                 modifier = Modifier
@@ -1010,104 +1099,10 @@ fun UserInfoScreen(userId: Int) {
                     ),
                     content = {
                         userInfo?.let { info ->
-                            var showFullBioDialog by remember { mutableStateOf(false) }
-                            
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                                    .onSizeChanged {
-                                        if (it.height > topBarHeightPx) {
-                                            topBarHeightPx = it.height
-                                        }
-                                    }
-                            ) {
-                                Text(
-                                    text = if (info.bio.isNotEmpty()) info.bio else "这个用户很懒，没有简介~",
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    modifier = Modifier.clickable { showFullBioDialog = true }
-                                )
-                                
-                                Spacer(modifier = Modifier.height(8.dp))
-                                
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Image(
-                                                modifier = Modifier.size(14.dp),
-                                                painter = painterResource(getLevelIconRes(info.level.toString())),
-                                                contentDescription = null
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "Lv.${info.level}",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
-                                        }
-                                    }
-                                    
-                                    // 金币 Chip
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.MonetizationOn,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(14.dp),
-                                                tint = MaterialTheme.colorScheme.onTertiaryContainer
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "${info.gold}",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if (showFullBioDialog) {
-                                AlertDialog(
-                                    onDismissRequest = { showFullBioDialog = false },
-                                    title = { Text("个人简介") },
-                                    text = {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .verticalScroll(rememberScrollState())
-                                        ) {
-                                            Text(
-                                                text = info.bio,
-                                                fontSize = 14.sp
-                                            )
-                                        }
-                                    },
-                                    confirmButton = {
-                                        TextButton(onClick = { showFullBioDialog = false }) {
-                                            Text("关闭")
-                                        }
-                                    }
-                                )
-                            }
+                            UserInfoTopBarExtraContent(
+                                info = info,
+                                onBioClick = { showFullBioDialog = true }
+                            )
                         }
                     }
                 )
@@ -1241,6 +1236,30 @@ fun UserInfoScreen(userId: Int) {
                     }
                 }
             }
+        }
+
+        userInfo?.takeIf { showFullBioDialog }?.let { info ->
+            AlertDialog(
+                onDismissRequest = { showFullBioDialog = false },
+                title = { Text("个人简介") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = info.bio,
+                            fontSize = 14.sp
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showFullBioDialog = false }) {
+                        Text("关闭")
+                    }
+                }
+            )
         }
     }
 }
