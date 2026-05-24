@@ -86,7 +86,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.composed
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -214,6 +213,7 @@ private val CollapsedAvatarSize = 36.dp
 private val ExpandedAvatarSize = 64.dp
 private val CollapsedAvatarHorizontalPadding = 28.dp
 private val CollapsedAvatarVerticalPadding = 12.dp
+private val UserInfoTopBarExpandedHeight = 160.dp + ExpandedAvatarSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -239,8 +239,8 @@ fun CollapsingAvatarTopAppBar(
         "The expandedHeight is expected to be specified and finite"
     }
 
-    require(expandedHeight >= 0.dp) {
-        "The expandedHeight ($expandedHeight) is expected to be non-negative"
+    require(expandedHeight > collapsedHeight) {
+        "The expandedHeight ($expandedHeight) is expected to be greater than the collapsedHeight"
     }
 
     val targetColor by
@@ -320,16 +320,10 @@ private fun Modifier.adjustPinnedHeightOffsetLimit(
     scrollBehavior: TopAppBarScrollBehavior?,
     collapsedHeight: Float
 ) =
-    scrollBehavior?.state?.let { state ->
-        composed {
-            var maxHeightPx by remember { mutableIntStateOf(0) }
-            onSizeChanged { size ->
-                if (size.height > maxHeightPx) {
-                    maxHeightPx = size.height
-                    val offsetRange = (size.height.toFloat() - collapsedHeight).coerceAtLeast(0f)
-                    state.heightOffsetLimit = -offsetRange
-                }
-            }
+    scrollBehavior?.state?.let {
+        onSizeChanged { size ->
+            val offset = size.height.toFloat() - it.heightOffset - collapsedHeight
+            it.heightOffsetLimit = -offset
         }
     } ?: this
 
@@ -768,7 +762,6 @@ private fun UserInfoTopBarExtraContent(
 @Composable
 fun UserInfoScreen(userId: Int) {
     val context = LocalContext.current
-    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
     var userInfo by remember { mutableStateOf<UserInfo?>(null) }
@@ -920,37 +913,18 @@ fun UserInfoScreen(userId: Int) {
         )
     }
 
-    val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val collapsedTopBarHeightPx = with(density) { TopAppBarDefaults.TopAppBarExpandedHeight.roundToPx() }
-    var topBarHeightPx by remember { mutableIntStateOf(0) }
-    var totalTopBarHeightPx by remember { mutableIntStateOf(0) }
-    val topBarHeight = with(density) { topBarHeightPx.toDp() }
-    val totalTopHeight = if (totalTopBarHeightPx > 0) {
-        with(density) { totalTopBarHeightPx.toDp() }
-    } else {
-        statusBarHeight + TopAppBarDefaults.TopAppBarExpandedHeight + topBarHeight
-    }
+    val topBarHeight = UserInfoTopBarExpandedHeight
     
     val backgroundAlpha by remember {
         derivedStateOf { 1f - scrollBehavior.state.collapsedFraction }
     }
     
     Box(modifier = Modifier.fillMaxSize()) {
-        userInfo?.let { info ->
-            UserInfoTopBarExtraContent(
-                info = info,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .alpha(0f)
-                    .onSizeChanged { topBarHeightPx = it.height },
-            )
-        }
-
         userInfo?.backgroundUrl?.let { backgroundUrl ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(totalTopHeight)
+                    .height(topBarHeight)
                     .graphicsLayer { alpha = backgroundAlpha }
             ) {
                 AsyncImage(
@@ -970,12 +944,8 @@ fun UserInfoScreen(userId: Int) {
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
+                val titleModifier = Modifier.padding(start = 2.dp)
                 CollapsingAvatarTopAppBar(
-                    modifier = Modifier.onSizeChanged {
-                        if (it.height > totalTopBarHeightPx) {
-                            totalTopBarHeightPx = it.height
-                        }
-                    },
                     expandedHeight = topBarHeight,
                     avatar = {
                         userInfo?.let {
@@ -993,6 +963,7 @@ fun UserInfoScreen(userId: Int) {
                         userInfo?.let {
                             Text(
                                 text = it.username,
+                                modifier = titleModifier,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 color = Color.White
@@ -1001,7 +972,10 @@ fun UserInfoScreen(userId: Int) {
                     },
                     subtitle = {
                         userInfo?.let {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = titleModifier,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Image(
                                     modifier = Modifier.size(14.dp),
                                     painter = painterResource(getLevelIconRes(it.level.toString())),
